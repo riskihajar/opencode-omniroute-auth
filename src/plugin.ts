@@ -1,5 +1,6 @@
 import type { Plugin, Hooks } from '@opencode-ai/plugin';
 import type {
+  OmniRouteApiMode,
   OmniRouteConfig,
   OmniRouteModel,
   OmniRouteProviderModel,
@@ -26,16 +27,19 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const providers = config.provider ?? {};
       const existingProvider = providers[OMNIROUTE_PROVIDER_ID];
       const baseUrl = getBaseUrl(existingProvider?.options);
+      const apiMode = getApiMode(existingProvider?.options);
+      const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
         ...existingProvider,
         name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
-        api: existingProvider?.api ?? 'chat',
+        api: providerApi,
         npm: existingProvider?.npm ?? OMNIROUTE_PROVIDER_NPM,
         env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
         options: {
           ...(existingProvider?.options ?? {}),
           baseURL: baseUrl,
+          apiMode,
         },
         models:
           existingProvider?.models && Object.keys(existingProvider.models).length > 0
@@ -105,9 +109,45 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   return {
     baseUrl,
     apiKey,
+    apiMode: getApiMode(provider.options),
     modelCacheTtl,
     refreshOnList,
   };
+}
+
+function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteApiMode {
+  if (isApiMode(api)) {
+    if (api !== apiMode) {
+      console.warn(
+        `[OmniRoute] provider.api (${api}) and options.apiMode (${apiMode}) differ; using options.apiMode.`,
+      );
+    }
+    return apiMode;
+  }
+
+  if (typeof api === 'string') {
+    console.warn(`[OmniRoute] Unsupported provider.api value: ${api}. Using ${apiMode}.`);
+  }
+
+  return apiMode;
+}
+
+function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
+  const value = options?.apiMode;
+  if (value === undefined) {
+    return 'chat';
+  }
+
+  if (isApiMode(value)) {
+    return value;
+  }
+
+  console.warn(`[OmniRoute] Unsupported apiMode option: ${String(value)}. Using chat.`);
+  return 'chat';
+}
+
+function isApiMode(value: unknown): value is OmniRouteApiMode {
+  return value === 'chat' || value === 'responses';
 }
 
 function getBaseUrl(options?: Record<string, unknown>): string {
@@ -286,10 +326,13 @@ function createFetchInterceptor(
     headers.set('Authorization', `Bearer ${config.apiKey}`);
     headers.set('Content-Type', 'application/json');
 
+    const sanitizedBody = await sanitizeGeminiToolSchemas(input, init, url);
+
     // Clone init to avoid mutating original
     const modifiedInit: RequestInit = {
       ...init,
       headers,
+      ...(sanitizedBody !== undefined ? { body: sanitizedBody } : {}),
     };
 
     // Make the request
@@ -302,4 +345,131 @@ function createFetchInterceptor(
 
     return response;
   };
+}
+
+const GEMINI_SCHEMA_KEYS_TO_REMOVE = new Set(['$schema', '$ref', 'ref', 'additionalProperties']);
+
+async function sanitizeGeminiToolSchemas(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  url: string,
+): Promise<string | undefined> {
+  if (!url.includes('/chat/completions') && !url.includes('/responses')) {
+    return undefined;
+  }
+
+  const rawBody = await getRawJsonBody(input, init);
+  if (!rawBody) {
+    return undefined;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return undefined;
+  }
+
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const model = payload.model;
+  if (typeof model !== 'string' || !model.toLowerCase().includes('gemini')) {
+    return undefined;
+  }
+
+  const tools = payload.tools;
+  if (!Array.isArray(tools) || tools.length === 0) {
+    return undefined;
+  }
+
+  const clonedPayload = structuredClone(payload);
+  const changed = sanitizeToolSchemaContainer(clonedPayload);
+  if (!changed) {
+    return undefined;
+  }
+
+  console.log('[OmniRoute] Sanitized Gemini tool schema keywords');
+  return JSON.stringify(clonedPayload);
+}
+
+async function getRawJsonBody(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+): Promise<string | undefined> {
+  if (typeof init?.body === 'string') {
+    return init.body;
+  }
+
+  if (!(input instanceof Request)) {
+    return undefined;
+  }
+
+  if (init?.body !== undefined) {
+    return undefined;
+  }
+
+  const contentType = input.headers.get('content-type');
+  if (!contentType || !contentType.toLowerCase().includes('application/json')) {
+    return undefined;
+  }
+
+  return input.clone().text();
+}
+
+function sanitizeToolSchemaContainer(payload: Record<string, unknown>): boolean {
+  const tools = payload.tools;
+  if (!Array.isArray(tools)) {
+    return false;
+  }
+
+  let changed = false;
+  for (const tool of tools) {
+    if (!isRecord(tool)) {
+      continue;
+    }
+
+    if (isRecord(tool.function) && isRecord(tool.function.parameters)) {
+      changed = stripSchemaKeys(tool.function.parameters) || changed;
+    }
+
+    if (isRecord(tool.function_declaration) && isRecord(tool.function_declaration.parameters)) {
+      changed = stripSchemaKeys(tool.function_declaration.parameters) || changed;
+    }
+
+    if (isRecord(tool.input_schema)) {
+      changed = stripSchemaKeys(tool.input_schema) || changed;
+    }
+  }
+
+  return changed;
+}
+
+function stripSchemaKeys(schema: Record<string, unknown>): boolean {
+  let changed = false;
+
+  for (const key of Object.keys(schema)) {
+    if (GEMINI_SCHEMA_KEYS_TO_REMOVE.has(key)) {
+      delete schema[key];
+      changed = true;
+      continue;
+    }
+
+    const value = schema[key];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isRecord(item)) {
+          changed = stripSchemaKeys(item) || changed;
+        }
+      }
+      continue;
+    }
+
+    if (isRecord(value)) {
+      changed = stripSchemaKeys(value) || changed;
+    }
+  }
+
+  return changed;
 }
