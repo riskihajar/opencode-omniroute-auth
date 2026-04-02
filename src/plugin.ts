@@ -392,17 +392,28 @@ function toProviderModel(
 }
 
 function getReasoningSupport(model: OmniRouteModel, config?: OmniRouteConfig): boolean {
-  if (typeof model.reasoning === 'boolean') {
-    return model.reasoning;
-  }
-
-  const modelId = model.id.toLowerCase();
   const configured = getConfiguredModelMetadata(model.id, config);
   if (typeof configured?.reasoning === 'boolean') {
     return configured.reasoning;
   }
 
+  if (supportsWidelySupportedReasoningEfforts(model.id)) {
+    return true;
+  }
+
+  if (typeof model.reasoning === 'boolean') {
+    return model.reasoning;
+  }
+
+  const modelId = model.id.toLowerCase();
+
   return /(^|\/)(gpt-5|o3|o4)|codex\/gpt-5|cx\/gpt-5/.test(modelId);
+}
+
+function supportsWidelySupportedReasoningEfforts(modelId: string): boolean {
+  return /(^|[-_/])(gpt-5\.4|gpt-5\.3-codex|gpt-5\.2-codex)(?:$|[-_/])/.test(
+    modelId.toLowerCase(),
+  );
 }
 
 function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, unknown> {
@@ -410,7 +421,9 @@ function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, 
     return model.variants;
   }
 
-  if (!reasoning || hasEmbeddedReasoningVariant(model.id)) {
+  const supportsWidelySupportedEfforts = supportsWidelySupportedReasoningEfforts(model.id);
+
+  if ((!reasoning && !supportsWidelySupportedEfforts) || hasEmbeddedReasoningVariant(model.id)) {
     return {};
   }
 
