@@ -328,9 +328,7 @@ function toProviderModels(
     model.id,
     toProviderModel(model, baseUrl, config),
   ]);
-  const mapped = Object.fromEntries(entries);
-  applyHardcodedCodexVariantOverrides(mapped);
-  return mapped;
+  return Object.fromEntries(entries);
 }
 
 function toProviderModel(
@@ -431,7 +429,7 @@ function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, 
 
 function supportsXHighReasoning(modelId: string): boolean {
   const id = modelId.toLowerCase();
-  return XHIGH_BASE_MODEL_IDS.has(id);
+  return id === 'codex/gpt-5.4' || id === 'cx/gpt-5.4';
 }
 
 function hasEmbeddedReasoningVariant(modelId: string): boolean {
@@ -473,24 +471,6 @@ function getConfiguredModelMetadata(
 function getModelFamily(modelId: string): string {
   const [family] = modelId.split('-');
   return family || modelId;
-}
-
-function applyHardcodedCodexVariantOverrides(models: Record<string, OmniRouteProviderModel>): void {
-  for (const modelId of XHIGH_BASE_MODEL_IDS) {
-    const model = models[modelId];
-    if (!model) continue;
-
-    model.capabilities = {
-      ...model.capabilities,
-      reasoning: true,
-    };
-    model.variants = {
-      low: { reasoningEffort: 'low' },
-      medium: { reasoningEffort: 'medium' },
-      high: { reasoningEffort: 'high' },
-      xhigh: { reasoningEffort: 'xhigh' },
-    };
-  }
 }
 
 function getModelLimits(model: OmniRouteModel): { context: number; input?: number; output: number } {
@@ -587,10 +567,6 @@ const CODEX_SYSTEM_PROMPT_SIGNATURES = [
   'You are OpenCode, You and the user share the same workspace',
   'You are a coding agent running in',
 ];
-const XHIGH_BASE_MODEL_IDS = new Set([
-  'codex/gpt-5.4',
-  'cx/gpt-5.4',
-]);
 
 async function transformRequestBody(
   input: RequestInfo | URL,
