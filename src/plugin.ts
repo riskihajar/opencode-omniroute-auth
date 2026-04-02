@@ -490,24 +490,6 @@ function applyHardcodedCodexVariantOverrides(models: Record<string, OmniRoutePro
       high: { reasoningEffort: 'high' },
       xhigh: { reasoningEffort: 'xhigh' },
     };
-
-    const xhighId = `${modelId}-xhigh`;
-    if (!models[xhighId]) {
-      models[xhighId] = {
-        ...model,
-        id: xhighId,
-        name: `${model.name} xHigh`,
-        capabilities: {
-          ...model.capabilities,
-          reasoning: false,
-        },
-        options: {
-          ...model.options,
-          reasoningEffort: 'xhigh',
-        },
-        variants: {},
-      };
-    }
   }
 }
 
@@ -608,10 +590,6 @@ const CODEX_SYSTEM_PROMPT_SIGNATURES = [
 const XHIGH_BASE_MODEL_IDS = new Set([
   'codex/gpt-5.4',
   'cx/gpt-5.4',
-  'codex/gpt-5.3-codex',
-  'cx/gpt-5.3-codex',
-  'codex/gpt-5.2-codex',
-  'cx/gpt-5.2-codex',
 ]);
 
 async function transformRequestBody(
