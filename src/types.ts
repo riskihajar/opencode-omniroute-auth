@@ -10,6 +10,10 @@ export interface OmniRouteModel {
   supportsStreaming?: boolean;
   supportsVision?: boolean;
   supportsTools?: boolean;
+  /** Whether the model supports reasoning effort controls */
+  reasoning?: boolean;
+  /** Optional OpenCode variant definitions for this model */
+  variants?: Record<string, unknown>;
   pricing?: {
     input?: number;
     output?: number;
@@ -24,6 +28,10 @@ export interface OmniRouteModelMetadata {
   supportsStreaming?: boolean;
   supportsVision?: boolean;
   supportsTools?: boolean;
+  /** Mark model as supporting reasoning effort controls */
+  reasoning?: boolean;
+  /** Optional explicit variant map exposed to OpenCode */
+  variants?: Record<string, unknown>;
   pricing?: {
     input?: number;
     output?: number;
