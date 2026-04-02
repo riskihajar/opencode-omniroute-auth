@@ -338,8 +338,10 @@ function toProviderModel(
 ): OmniRouteProviderModel {
   const supportsVision = model.supportsVision === true;
   const supportsTools = model.supportsTools !== false;
-  const reasoning = getReasoningSupport(model, config);
+  const embeddedVariant = getEmbeddedReasoningVariant(model.id);
+  const reasoning = embeddedVariant ? false : getReasoningSupport(model, config);
   const variants = getVariants(model, reasoning);
+  const options = embeddedVariant ? { reasoningEffort: embeddedVariant } : {};
 
   return {
     id: model.id,
@@ -382,7 +384,7 @@ function toProviderModel(
       },
     },
     limit: getModelLimits(model),
-    options: {},
+    options,
     headers: {},
     status: 'active',
     variants,
@@ -420,8 +422,27 @@ function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, 
 }
 
 function hasEmbeddedReasoningVariant(modelId: string): boolean {
+  return getEmbeddedReasoningVariant(modelId) !== undefined;
+}
+
+function getEmbeddedReasoningVariant(
+  modelId: string,
+): 'low' | 'medium' | 'high' | 'minimal' | 'none' | 'max' | 'xhigh' | undefined {
   const id = modelId.toLowerCase();
-  return /(?:^|[-_/])(low|medium|high|minimal|none|max|xhigh)(?:$|[-_/])/.test(id);
+  const match = id.match(/(?:^|[-_/])(low|medium|high|minimal|none|max|xhigh)(?:$|[-_/])/);
+  const effort = match?.[1];
+  if (
+    effort === 'low' ||
+    effort === 'medium' ||
+    effort === 'high' ||
+    effort === 'minimal' ||
+    effort === 'none' ||
+    effort === 'max' ||
+    effort === 'xhigh'
+  ) {
+    return effort;
+  }
+  return undefined;
 }
 
 function getConfiguredModelMetadata(
