@@ -18,6 +18,13 @@ import { fetchModels } from './models.js';
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
 const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
+const DEBUG = process.env.OMNIROUTE_PLUGIN_DEBUG === '1';
+
+function debugLog(message: string, ...args: unknown[]): void {
+  if (DEBUG) {
+    console.log(message, ...args);
+  }
+}
 
 type AuthHook = NonNullable<Hooks['auth']>;
 type AuthLoader = NonNullable<AuthHook['loader']>;
@@ -91,7 +98,7 @@ async function loadProviderOptions(
   try {
     const forceRefresh = config.refreshOnList !== false;
     models = await fetchModels(config, config.apiKey, forceRefresh);
-    console.log(`[OmniRoute] Available models: ${models.map((model) => model.id).join(', ')}`);
+    debugLog(`[OmniRoute] Available models: ${models.map((model) => model.id).join(', ')}`);
   } catch (error) {
     console.warn('[OmniRoute] Failed to fetch models, using defaults:', error);
     models = OMNIROUTE_DEFAULT_MODELS;
@@ -99,7 +106,7 @@ async function loadProviderOptions(
 
   replaceProviderModels(provider, toProviderModels(models, config.baseUrl, config));
   if (isRecord(provider.models)) {
-    console.log(`[OmniRoute] Provider models hydrated: ${Object.keys(provider.models).length}`);
+    debugLog(`[OmniRoute] Provider models hydrated: ${Object.keys(provider.models).length}`);
   }
 
   return {
@@ -457,7 +464,7 @@ function createFetchInterceptor(
       return fetch(input, init);
     }
 
-    console.log(`[OmniRoute] Intercepting request to ${url}`);
+    debugLog(`[OmniRoute] Intercepting request to ${url}`);
 
     // Merge headers from Request and init to avoid dropping existing headers
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
@@ -485,7 +492,7 @@ function createFetchInterceptor(
 
     // Handle model fetching endpoint specially
     if (url.includes('/v1/models') && response.ok) {
-      console.log('[OmniRoute] Processing /v1/models response');
+      debugLog('[OmniRoute] Processing /v1/models response');
     }
 
     return response;
@@ -539,7 +546,7 @@ function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {
 
   const changed = sanitizeToolSchemaContainer(payload);
   if (changed) {
-    console.log('[OmniRoute] Sanitized Gemini tool schema keywords');
+    debugLog('[OmniRoute] Sanitized Gemini tool schema keywords');
   }
 
   return changed;
