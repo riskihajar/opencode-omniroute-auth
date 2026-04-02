@@ -429,7 +429,7 @@ function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, 
 
 function supportsXHighReasoning(modelId: string): boolean {
   const id = modelId.toLowerCase();
-  return id === 'codex/gpt-5.4' || id === 'cx/gpt-5.4';
+  return id.includes('gpt-5.2') || id.includes('gpt-5.3');
 }
 
 function hasEmbeddedReasoningVariant(modelId: string): boolean {
