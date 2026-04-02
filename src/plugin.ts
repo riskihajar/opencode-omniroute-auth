@@ -414,11 +414,22 @@ function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, 
     return {};
   }
 
-  return {
+  const variants: Record<string, unknown> = {
     low: { reasoningEffort: 'low' },
     medium: { reasoningEffort: 'medium' },
     high: { reasoningEffort: 'high' },
   };
+
+  if (supportsXHighReasoning(model.id)) {
+    variants.xhigh = { reasoningEffort: 'xhigh' };
+  }
+
+  return variants;
+}
+
+function supportsXHighReasoning(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return id.includes('gpt-5.2') || id.includes('gpt-5.3');
 }
 
 function hasEmbeddedReasoningVariant(modelId: string): boolean {
