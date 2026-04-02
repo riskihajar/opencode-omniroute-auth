@@ -5,7 +5,7 @@ import {
   MODEL_CACHE_TTL,
   REQUEST_TIMEOUT,
 } from './constants.js';
-import { getModelsDevIndex, normalizeModelKey } from './models-dev.js';
+import { getModelsDevIndex, normalizeModelKey, type ModelsDevModel } from './models-dev.js';
 import type { ModelsDevIndex } from './models-dev.js';
 import { enrichComboModels, clearComboCache } from './omniroute-combos.js';
 
@@ -221,8 +221,10 @@ async function enrichModelMetadata(
       ? models
       : models.map((model) => applyModelsDevMetadata(model, config, modelsDevIndex));
 
+  const withOverrides = applyConfiguredModelMetadata(withModelsDev, config, modelsDevIndex);
+
   // Enrich combo models with lowest common capabilities
-  const withComboCapabilities = await enrichComboModels(withModelsDev, config, modelsDevIndex);
+  const withComboCapabilities = await enrichComboModels(withOverrides, config, modelsDevIndex);
 
   return withComboCapabilities;
 }
@@ -264,24 +266,100 @@ function applyModelsDevMetadata(
   if (!best) return model;
 
   // Merge capabilities (only fill in missing values)
+  return mergeModelMetadata(model, metadataFromModelsDev(best));
+}
+
+function applyConfiguredModelMetadata(
+  models: OmniRouteModel[],
+  config: OmniRouteConfig,
+  modelsDevIndex: ModelsDevIndex | null,
+): OmniRouteModel[] {
+  const metadataConfig = config.modelMetadata;
+  if (!metadataConfig) return models;
+
+  let output = [...models];
+
+  if (Array.isArray(metadataConfig)) {
+    for (const block of metadataConfig) {
+      const matcher = typeof block.match === 'string' ? block.match : coerceMatcherToRegExp(block.match);
+      const metadata = metadataWithoutMatcher(block);
+      if (typeof matcher === 'string') {
+        const existingIndex = output.findIndex((model) => model.id === matcher);
+        if (existingIndex >= 0) {
+          output[existingIndex] = mergeModelMetadata(output[existingIndex], metadata);
+        } else if (block.addIfMissing) {
+          output.push(createSyntheticModel(matcher, metadata, modelsDevIndex, config));
+        }
+        continue;
+      }
+
+      if (!matcher) continue;
+      output = output.map((model) => (matcher.test(model.id) ? mergeModelMetadata(model, metadata) : model));
+    }
+
+    return output;
+  }
+
+  for (const [modelId, metadata] of Object.entries(metadataConfig)) {
+    const existingIndex = output.findIndex((model) => model.id === modelId);
+    if (existingIndex >= 0) {
+      output[existingIndex] = mergeModelMetadata(output[existingIndex], metadata);
+    } else {
+      output.push(createSyntheticModel(modelId, metadata, modelsDevIndex, config));
+    }
+  }
+
+  return output;
+}
+
+function metadataFromModelsDev(model: ModelsDevModel): OmniRouteModelMetadata {
+  return {
+    ...(model.limit?.context !== undefined ? { contextWindow: model.limit.context } : {}),
+    ...(model.limit?.output !== undefined ? { maxTokens: model.limit.output } : {}),
+    ...(model.modalities?.input?.includes('image') ? { supportsVision: true } : {}),
+    ...(model.tool_call === true ? { supportsTools: true } : {}),
+    ...(model.reasoning === true ? { reasoning: true } : {}),
+    supportsStreaming: true,
+  };
+}
+
+function mergeModelMetadata(model: OmniRouteModel, metadata: OmniRouteModelMetadata): OmniRouteModel {
   return {
     ...model,
-    ...(model.contextWindow === undefined && best.limit?.context !== undefined
-      ? { contextWindow: best.limit.context }
-      : {}),
-    ...(model.maxTokens === undefined && best.limit?.output !== undefined
-      ? { maxTokens: best.limit.output }
-      : {}),
-    ...(model.supportsVision === undefined && best.modalities?.input?.includes('image')
-      ? { supportsVision: true }
-      : {}),
-    ...(model.supportsTools === undefined && best.tool_call === true
-      ? { supportsTools: true }
-      : {}),
-    ...(model.supportsStreaming === undefined
-      ? { supportsStreaming: true } // Assume streaming is supported by default
-      : {}),
+    ...(metadata.name !== undefined ? { name: metadata.name } : {}),
+    ...(metadata.description !== undefined ? { description: metadata.description } : {}),
+    ...(metadata.contextWindow !== undefined ? { contextWindow: metadata.contextWindow } : {}),
+    ...(metadata.maxTokens !== undefined ? { maxTokens: metadata.maxTokens } : {}),
+    ...(metadata.supportsStreaming !== undefined ? { supportsStreaming: metadata.supportsStreaming } : {}),
+    ...(metadata.supportsVision !== undefined ? { supportsVision: metadata.supportsVision } : {}),
+    ...(metadata.supportsTools !== undefined ? { supportsTools: metadata.supportsTools } : {}),
+    ...(metadata.reasoning !== undefined ? { reasoning: metadata.reasoning } : {}),
+    ...(metadata.variants !== undefined ? { variants: metadata.variants } : {}),
+    ...(metadata.pricing !== undefined ? { pricing: metadata.pricing } : {}),
   };
+}
+
+function metadataWithoutMatcher(block: OmniRouteModelMetadata & { match?: string | RegExp; addIfMissing?: boolean }): OmniRouteModelMetadata {
+  const { match: _match, addIfMissing: _addIfMissing, ...metadata } = block;
+  return metadata;
+}
+
+function createSyntheticModel(
+  modelId: string,
+  metadata: OmniRouteModelMetadata,
+  modelsDevIndex: ModelsDevIndex | null,
+  config: OmniRouteConfig,
+): OmniRouteModel {
+  const seed = modelsDevIndex
+    ? applyModelsDevMetadata({ id: modelId, name: metadata.name || modelId }, config, modelsDevIndex)
+    : ({ id: modelId, name: metadata.name || modelId } as OmniRouteModel);
+
+  return mergeModelMetadata(seed, metadata);
+}
+
+function coerceMatcherToRegExp(value: unknown): RegExp | null {
+  if (value instanceof RegExp) return value;
+  return null;
 }
 
 /**

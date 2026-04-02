@@ -3,6 +3,7 @@ import type {
   OmniRouteApiMode,
   OmniRouteConfig,
   OmniRouteModel,
+  OmniRouteModelMetadata,
   OmniRouteModelMetadataConfig,
   OmniRouteModelsDevConfig,
   OmniRouteProviderModel,
@@ -46,7 +47,12 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
         models:
           existingProvider?.models && Object.keys(existingProvider.models).length > 0
             ? existingProvider.models
-            : toProviderModels(OMNIROUTE_DEFAULT_MODELS, baseUrl),
+            : toProviderModels(OMNIROUTE_DEFAULT_MODELS, baseUrl, {
+                baseUrl,
+                apiKey: '',
+                apiMode,
+                modelMetadata: getModelMetadataConfig(existingProvider?.options),
+              }),
       };
 
       config.provider = providers;
@@ -91,7 +97,7 @@ async function loadProviderOptions(
     models = OMNIROUTE_DEFAULT_MODELS;
   }
 
-  replaceProviderModels(provider, toProviderModels(models, config.baseUrl));
+  replaceProviderModels(provider, toProviderModels(models, config.baseUrl, config));
   if (isRecord(provider.models)) {
     console.log(`[OmniRoute] Provider models hydrated: ${Object.keys(provider.models).length}`);
   }
@@ -309,17 +315,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function toProviderModels(
   models: OmniRouteModel[],
   baseUrl: string,
+  config?: OmniRouteConfig,
 ): Record<string, OmniRouteProviderModel> {
   const entries: Array<[string, OmniRouteProviderModel]> = models.map((model) => [
     model.id,
-    toProviderModel(model, baseUrl),
+    toProviderModel(model, baseUrl, config),
   ]);
   return Object.fromEntries(entries);
 }
 
-function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProviderModel {
+function toProviderModel(
+  model: OmniRouteModel,
+  baseUrl: string,
+  config?: OmniRouteConfig,
+): OmniRouteProviderModel {
   const supportsVision = model.supportsVision === true;
   const supportsTools = model.supportsTools !== false;
+  const reasoning = getReasoningSupport(model, config);
+  const variants = getVariants(model, reasoning);
 
   return {
     id: model.id,
@@ -334,7 +347,7 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProvi
     },
     capabilities: {
       temperature: true,
-      reasoning: false,
+      reasoning,
       attachment: supportsVision,
       toolcall: supportsTools,
       input: {
@@ -368,8 +381,50 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProvi
     options: {},
     headers: {},
     status: 'active',
-    variants: {},
+    variants,
   };
+}
+
+function getReasoningSupport(model: OmniRouteModel, config?: OmniRouteConfig): boolean {
+  if (typeof model.reasoning === 'boolean') {
+    return model.reasoning;
+  }
+
+  const modelId = model.id.toLowerCase();
+  const configured = getConfiguredModelMetadata(model.id, config);
+  if (typeof configured?.reasoning === 'boolean') {
+    return configured.reasoning;
+  }
+
+  return /(^|\/)(gpt-5|o3|o4)|codex\/gpt-5|cx\/gpt-5/.test(modelId);
+}
+
+function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, unknown> {
+  if (model.variants && Object.keys(model.variants).length > 0) {
+    return model.variants;
+  }
+
+  if (!reasoning) {
+    return {};
+  }
+
+  return {
+    low: { reasoningEffort: 'low' },
+    medium: { reasoningEffort: 'medium' },
+    high: { reasoningEffort: 'high' },
+  };
+}
+
+function getConfiguredModelMetadata(
+  modelId: string,
+  config?: OmniRouteConfig,
+): OmniRouteModelMetadata | undefined {
+  const metadataConfig = config?.modelMetadata;
+  if (!metadataConfig || Array.isArray(metadataConfig)) {
+    return undefined;
+  }
+  const metadata = metadataConfig[modelId];
+  return metadata && typeof metadata === 'object' ? metadata : undefined;
 }
 
 function getModelFamily(modelId: string): string {
@@ -416,13 +471,13 @@ function createFetchInterceptor(
     headers.set('Authorization', `Bearer ${config.apiKey}`);
     headers.set('Content-Type', 'application/json');
 
-    const sanitizedBody = await sanitizeGeminiToolSchemas(input, init, url);
+    const transformedBody = await transformRequestBody(input, init, url);
 
     // Clone init to avoid mutating original
     const modifiedInit: RequestInit = {
       ...init,
       headers,
-      ...(sanitizedBody !== undefined ? { body: sanitizedBody } : {}),
+      ...(transformedBody !== undefined ? { body: transformedBody } : {}),
     };
 
     // Make the request
@@ -439,7 +494,7 @@ function createFetchInterceptor(
 
 const GEMINI_SCHEMA_KEYS_TO_REMOVE = new Set(['$schema', '$ref', 'ref', 'additionalProperties']);
 
-async function sanitizeGeminiToolSchemas(
+async function transformRequestBody(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   url: string,
@@ -464,24 +519,56 @@ async function sanitizeGeminiToolSchemas(
     return undefined;
   }
 
+  let changed = false;
+  changed = normalizeReasoningPayload(payload) || changed;
+  changed = sanitizeGeminiToolSchemas(payload) || changed;
+
+  return changed ? JSON.stringify(payload) : undefined;
+}
+
+function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {
   const model = payload.model;
   if (typeof model !== 'string' || !model.toLowerCase().includes('gemini')) {
-    return undefined;
+    return false;
   }
 
   const tools = payload.tools;
   if (!Array.isArray(tools) || tools.length === 0) {
-    return undefined;
+    return false;
   }
 
-  const clonedPayload = structuredClone(payload);
-  const changed = sanitizeToolSchemaContainer(clonedPayload);
-  if (!changed) {
-    return undefined;
+  const changed = sanitizeToolSchemaContainer(payload);
+  if (changed) {
+    console.log('[OmniRoute] Sanitized Gemini tool schema keywords');
   }
 
-  console.log('[OmniRoute] Sanitized Gemini tool schema keywords');
-  return JSON.stringify(clonedPayload);
+  return changed;
+}
+
+function normalizeReasoningPayload(payload: Record<string, unknown>): boolean {
+  let changed = false;
+
+  const effort =
+    typeof payload.reasoningEffort === 'string'
+      ? payload.reasoningEffort
+      : isRecord(payload.reasoning) && typeof payload.reasoning.effort === 'string'
+        ? payload.reasoning.effort
+        : undefined;
+
+  if (typeof payload.reasoningEffort === 'string') {
+    delete payload.reasoningEffort;
+    changed = true;
+  }
+
+  if (effort) {
+    payload.reasoning = {
+      ...(isRecord(payload.reasoning) ? payload.reasoning : {}),
+      effort,
+    };
+    changed = true;
+  }
+
+  return changed;
 }
 
 async function getRawJsonBody(
