@@ -381,10 +381,7 @@ function toProviderModel(
         write: 0,
       },
     },
-    limit: {
-      context: model.contextWindow ?? 4096,
-      output: model.maxTokens ?? 4096,
-    },
+    limit: getModelLimits(model),
     options: {},
     headers: {},
     status: 'active',
@@ -411,7 +408,7 @@ function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, 
     return model.variants;
   }
 
-  if (!reasoning) {
+  if (!reasoning || hasEmbeddedReasoningVariant(model.id)) {
     return {};
   }
 
@@ -420,6 +417,11 @@ function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, 
     medium: { reasoningEffort: 'medium' },
     high: { reasoningEffort: 'high' },
   };
+}
+
+function hasEmbeddedReasoningVariant(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return /(?:^|[-_/])(low|medium|high|minimal|none|max|xhigh)(?:$|[-_/])/.test(id);
 }
 
 function getConfiguredModelMetadata(
@@ -437,6 +439,27 @@ function getConfiguredModelMetadata(
 function getModelFamily(modelId: string): string {
   const [family] = modelId.split('-');
   return family || modelId;
+}
+
+function getModelLimits(model: OmniRouteModel): { context: number; input?: number; output: number } {
+  const explicitContext = model.contextWindow;
+  const explicitOutput = model.maxTokens;
+  const modelId = model.id.toLowerCase();
+  const codexLike = /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$|(^|[-_/])o[34](?:$|[-_/])/.test(modelId);
+
+  if (codexLike) {
+    const context = explicitContext ?? 256000;
+    const output = explicitOutput ?? 32000;
+    const input = Math.max(8192, context - output);
+    return { context, input, output };
+  }
+
+  const context = explicitContext ?? 32768;
+  const output = explicitOutput ?? 8192;
+  if (context > output) {
+    return { context, input: context - output, output };
+  }
+  return { context, output };
 }
 
 /**
