@@ -4,6 +4,7 @@ import type {
   OmniRouteConfig,
   OmniRouteModel,
   OmniRouteModelMetadata,
+  OmniRouteModelMetadataBlock,
   OmniRouteModelMetadataConfig,
   OmniRouteModelsDevConfig,
   OmniRouteProviderModel,
@@ -17,7 +18,7 @@ import { fetchModels } from './models.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai-compatible';
-const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/open-responses';
+const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/openai';
 const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
 const DEBUG = process.env.OMNIROUTE_PLUGIN_DEBUG === '1';
 
@@ -39,6 +40,10 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const existingProvider = providers[OMNIROUTE_PROVIDER_ID];
       const baseUrl = getBaseUrl(existingProvider?.options);
       const apiMode = getApiMode(existingProvider?.options);
+      const configuredModelMetadata = mergeModelMetadataConfigs(
+        getModelMetadataConfig(existingProvider?.options),
+        getProviderModelMetadataConfig(existingProvider?.models),
+      );
       const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
       const providerNpm = resolveProviderNpm(existingProvider?.npm, apiMode);
       const providerUrl = getProviderUrl(baseUrl, apiMode);
@@ -55,15 +60,16 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           url: providerUrl,
           apiMode,
         },
-        models:
-          existingProvider?.models && Object.keys(existingProvider.models).length > 0
-            ? existingProvider.models
-            : toProviderModels(OMNIROUTE_DEFAULT_MODELS, baseUrl, {
-                baseUrl,
-                apiKey: '',
-                apiMode,
-                modelMetadata: getModelMetadataConfig(existingProvider?.options),
-              }),
+        models: toProviderModels(
+          getConfigSeedModels(existingProvider?.models),
+          baseUrl,
+          {
+            baseUrl,
+            apiKey: '',
+            apiMode,
+            modelMetadata: configuredModelMetadata,
+          },
+        ),
       };
 
       config.provider = providers;
@@ -126,7 +132,10 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   const modelCacheTtl = getPositiveNumber(provider.options, 'modelCacheTtl');
   const refreshOnList = getBoolean(provider.options, 'refreshOnList');
   const modelsDev = getModelsDevConfig(provider.options);
-  const modelMetadata = getModelMetadataConfig(provider.options);
+  const modelMetadata = mergeModelMetadataConfigs(
+    getModelMetadataConfig(provider.options),
+    getProviderModelMetadataConfig(provider.models),
+  );
 
   return {
     baseUrl,
@@ -194,9 +203,7 @@ function getProviderNpm(apiMode: OmniRouteApiMode): string {
 }
 
 function getProviderUrl(baseUrl: string, apiMode: OmniRouteApiMode): string {
-  return apiMode === 'responses'
-    ? `${baseUrl.replace(/\/$/, '')}${OMNIROUTE_ENDPOINTS.RESPONSES}`
-    : baseUrl;
+  return baseUrl;
 }
 
 function getBaseUrl(options?: Record<string, unknown>): string {
@@ -297,6 +304,87 @@ function getModelMetadataConfig(
   return undefined;
 }
 
+function getProviderModelMetadataConfig(
+  models: unknown,
+): OmniRouteModelMetadataConfig | undefined {
+  if (!isRecord(models)) return undefined;
+
+  const metadata: Record<string, OmniRouteModelMetadata> = {};
+
+  for (const [modelId, raw] of Object.entries(models)) {
+    if (!isRecord(raw)) continue;
+
+    const next: OmniRouteModelMetadata = {};
+
+    if (typeof raw.name === 'string' && raw.name.trim() !== '') {
+      next.name = raw.name;
+    }
+
+    if (typeof raw.description === 'string' && raw.description.trim() !== '') {
+      next.description = raw.description;
+    }
+
+    if (isRecord(raw.limit)) {
+      const context = raw.limit.context;
+      const output = raw.limit.output;
+      if (typeof context === 'number' && context > 0) next.contextWindow = context;
+      if (typeof output === 'number' && output > 0) next.maxTokens = output;
+    }
+
+    if (isRecord(raw.capabilities)) {
+      if (typeof raw.capabilities.reasoning === 'boolean') {
+        next.reasoning = raw.capabilities.reasoning;
+      }
+      if (typeof raw.capabilities.toolcall === 'boolean') {
+        next.supportsTools = raw.capabilities.toolcall;
+      }
+      if (typeof raw.capabilities.attachment === 'boolean') {
+        next.supportsVision = raw.capabilities.attachment;
+      }
+    }
+
+    if (isRecord(raw.variants) && Object.keys(raw.variants).length > 0) {
+      next.variants = raw.variants;
+    }
+
+    if (Object.keys(next).length > 0) {
+      metadata[modelId] = next;
+    }
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function mergeModelMetadataConfigs(
+  base: OmniRouteModelMetadataConfig | undefined,
+  extra: OmniRouteModelMetadataConfig | undefined,
+): OmniRouteModelMetadataConfig | undefined {
+  if (!base) return extra;
+  if (!extra) return base;
+
+  if (Array.isArray(base) && Array.isArray(extra)) {
+    return [...base, ...extra];
+  }
+
+  if (!Array.isArray(base) && !Array.isArray(extra)) {
+    return { ...base, ...extra };
+  }
+
+  const toBlocks = (value: OmniRouteModelMetadataConfig): OmniRouteModelMetadataBlock[] => {
+    if (Array.isArray(value)) {
+      return value as OmniRouteModelMetadataBlock[];
+    }
+
+    return Object.entries(value).map(([match, metadata]) => ({
+      match,
+      addIfMissing: true,
+      ...metadata,
+    }));
+  };
+
+  return [...toBlocks(base), ...toBlocks(extra)];
+}
+
 function getStringRecord(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) return undefined;
 
@@ -345,6 +433,40 @@ function replaceProviderModels(
   provider.models = models;
 }
 
+function getConfigSeedModels(models: unknown): OmniRouteModel[] {
+  if (!isRecord(models) || Object.keys(models).length === 0) {
+    return OMNIROUTE_DEFAULT_MODELS;
+  }
+
+  return Object.entries(models).map(([modelId, raw]) => {
+    const metadata = isRecord(raw) ? raw : {};
+    const limit = isRecord(metadata.limit) ? metadata.limit : undefined;
+    const capabilities = isRecord(metadata.capabilities) ? metadata.capabilities : undefined;
+
+    return {
+      id: modelId,
+      name: typeof metadata.name === 'string' && metadata.name.trim() !== '' ? metadata.name : modelId,
+      description:
+        typeof metadata.description === 'string' && metadata.description.trim() !== ''
+          ? metadata.description
+          : undefined,
+      contextWindow:
+        typeof limit?.context === 'number' && limit.context > 0 ? limit.context : undefined,
+      maxTokens: typeof limit?.output === 'number' && limit.output > 0 ? limit.output : undefined,
+      supportsVision:
+        typeof capabilities?.attachment === 'boolean' ? capabilities.attachment : undefined,
+      supportsTools:
+        typeof capabilities?.toolcall === 'boolean' ? capabilities.toolcall : undefined,
+      reasoning:
+        typeof capabilities?.reasoning === 'boolean' ? capabilities.reasoning : undefined,
+      variants:
+        isRecord(metadata.variants) && Object.keys(metadata.variants).length > 0
+          ? metadata.variants
+          : undefined,
+    } satisfies OmniRouteModel;
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -371,8 +493,8 @@ function toProviderModel(
   const supportsTools = model.supportsTools !== false;
   const embeddedVariant = getEmbeddedReasoningVariant(model.id);
   const reasoning = embeddedVariant ? false : getReasoningSupport(model, config);
-  const variants = getVariants(model, reasoning);
-  const options = embeddedVariant ? { reasoningEffort: embeddedVariant } : {};
+  const variants = getVariants(model, reasoning, apiMode);
+  const options = embeddedVariant ? getReasoningVariantOptions(embeddedVariant, apiMode) : {};
 
   return {
     id: model.id,
@@ -447,22 +569,36 @@ function supportsWidelySupportedReasoningEfforts(modelId: string): boolean {
   );
 }
 
-function getVariants(model: OmniRouteModel, reasoning: boolean): Record<string, unknown> {
-  if (model.variants && Object.keys(model.variants).length > 0) {
-    return model.variants;
-  }
-
+function getVariants(
+  model: OmniRouteModel,
+  reasoning: boolean,
+  apiMode: OmniRouteApiMode,
+): Record<string, unknown> {
   const supportsWidelySupportedEfforts = supportsWidelySupportedReasoningEfforts(model.id);
 
-  if ((!reasoning && !supportsWidelySupportedEfforts) || hasEmbeddedReasoningVariant(model.id)) {
-    return {};
+  const generated = (!reasoning && !supportsWidelySupportedEfforts) || hasEmbeddedReasoningVariant(model.id)
+    ? {}
+    : {
+    low: getReasoningVariantOptions('low', apiMode),
+    medium: getReasoningVariantOptions('medium', apiMode),
+    high: getReasoningVariantOptions('high', apiMode),
+  };
+
+  if (model.variants && Object.keys(model.variants).length > 0) {
+    return {
+      ...generated,
+      ...model.variants,
+    };
   }
 
-  return {
-    low: { reasoningEffort: 'low' },
-    medium: { reasoningEffort: 'medium' },
-    high: { reasoningEffort: 'high' },
-  };
+  return generated;
+}
+
+function getReasoningVariantOptions(
+  effort: 'low' | 'medium' | 'high' | 'minimal' | 'none' | 'max' | 'xhigh',
+  _apiMode: OmniRouteApiMode,
+): Record<string, unknown> {
+  return { reasoningEffort: effort };
 }
 
 function hasEmbeddedReasoningVariant(modelId: string): boolean {
@@ -627,8 +763,8 @@ async function transformRequestBody(
   }
 
   let changed = false;
-  changed = normalizeResponsesPayload(payload, url) || changed;
   changed = normalizeReasoningPayload(payload) || changed;
+  changed = normalizeResponsesPayload(payload, url) || changed;
   changed = slimCodexPayload(payload) || changed;
   changed = sanitizeGeminiToolSchemas(payload) || changed;
 
@@ -649,6 +785,21 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
 
   if (payload.max_tokens !== undefined) {
     delete payload.max_tokens;
+    changed = true;
+  }
+
+  if (payload.reasoningEffort !== undefined) {
+    delete payload.reasoningEffort;
+    changed = true;
+  }
+
+  if (payload.textVerbosity !== undefined) {
+    delete payload.textVerbosity;
+    changed = true;
+  }
+
+  if (payload.reasoning_effort !== undefined) {
+    delete payload.reasoning_effort;
     changed = true;
   }
 

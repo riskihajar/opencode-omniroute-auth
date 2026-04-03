@@ -59,10 +59,127 @@ test('config hook switches provider package and URL for responses mode', async (
   await plugin.config(config);
 
   assert.equal(config.provider.omniroute.api, 'responses');
-  assert.equal(config.provider.omniroute.npm, '@ai-sdk/open-responses');
-  assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1/responses');
-  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/open-responses');
-  assert.equal(config.provider.omniroute.models['gpt-4o'].api.url, 'http://localhost:20128/v1/responses');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.url, 'http://localhost:20128/v1');
+});
+
+test('responses mode preserves configured variants from provider options', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'gpt-4.1-mini': {
+            name: 'GPT-4.1 Mini',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: false,
+            },
+            limit: {
+              context: 128000,
+              output: 16384,
+            },
+            variants: {
+              low: { reasoningEffort: 'low', reasoning: { effort: 'low' } },
+              medium: { reasoningEffort: 'medium', reasoning: { effort: 'medium' } },
+              high: { reasoningEffort: 'high', reasoning: { effort: 'high' } },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['gpt-4.1-mini'].variants, {
+    low: { reasoningEffort: 'low', reasoning: { effort: 'low' } },
+    medium: { reasoningEffort: 'medium', reasoning: { effort: 'medium' } },
+    high: { reasoningEffort: 'high', reasoning: { effort: 'high' } },
+  });
+});
+
+test('responses mode merges generated reasoning variants with explicit custom variants', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'codex/gpt-5.4': {
+            name: 'Codex GPT-5.4',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: false,
+            },
+            limit: {
+              context: 256000,
+              output: 32000,
+            },
+            variants: {
+              xhigh: { reasoningEffort: 'xhigh' },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['codex/gpt-5.4'].variants, {
+    low: { reasoningEffort: 'low' },
+    medium: { reasoningEffort: 'medium' },
+    high: { reasoningEffort: 'high' },
+    xhigh: { reasoningEffort: 'xhigh' },
+  });
+});
+
+test('responses mode exposes generated reasoning variants for reasoning-capable models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'codex/gpt-5.4': {
+            name: 'Codex GPT-5.4',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: false,
+            },
+            limit: {
+              context: 256000,
+              output: 32000,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['codex/gpt-5.4'].variants, {
+    low: { reasoningEffort: 'low' },
+    medium: { reasoningEffort: 'medium' },
+    high: { reasoningEffort: 'high' },
+  });
 });
 
 test('loader injects auth headers only for OmniRoute URLs', async () => {
@@ -150,7 +267,7 @@ test('loader exposes full responses endpoint URL in responses mode', async () =>
   const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
 
   assert.equal(options.baseURL, 'http://localhost:20128/v1');
-  assert.equal(options.url, 'http://localhost:20128/v1/responses');
+  assert.equal(options.url, 'http://localhost:20128/v1');
 });
 
 test('gemini tool schema payload is sanitized before forwarding', async () => {
@@ -386,4 +503,109 @@ test('responses payload strips unsupported token limit fields', async () => {
   assert.ok(forwardedBody);
   assert.equal(forwardedBody.max_output_tokens, undefined);
   assert.equal(forwardedBody.max_tokens, undefined);
+});
+
+test('responses payload strips chat-only reasoning aliases but keeps reasoning object', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'gpt-4.1-mini',
+      input: 'test',
+      reasoningEffort: 'high',
+      reasoning_effort: 'high',
+      textVerbosity: 'medium',
+      reasoning: { effort: 'high' },
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningEffort, undefined);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+  assert.equal(forwardedBody.textVerbosity, undefined);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
+});
+
+test('responses payload converts reasoningEffort into reasoning object before cleanup', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'gpt-4.1-mini',
+      input: 'test',
+      reasoningEffort: 'medium',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningEffort, undefined);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'medium' });
 });

@@ -2,12 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.2] - 2026-04-03
+
+### Changed
+
+- Switched final Responses API runtime integration to `@ai-sdk/openai` for better alignment with OpenCode custom-provider behavior.
+- Updated reasoning variant generation so Responses mode keeps standard effort variants visible.
+- Merged generated reasoning variants with explicit custom variants like `xhigh` instead of replacing them.
+- Rewrote README to clearly document the OmniRoute-specific value of this standalone package versus a generic fork.
+
+### Fixed
+
+- Fixed Responses mode models only showing custom variants (for example `xhigh`) while dropping generated `low` / `medium` / `high` variants.
+- Fixed Responses request normalization order so `reasoningEffort` is preserved as `reasoning.effort` in outgoing Responses payloads.
+
+### Verification
+
+- Verified responses-mode variant picker exposes merged reasoning variants in local OpenCode testing.
+- Verified `npm test` passes after provider/runtime and variant-merging fixes.
+
 ## [1.2.1] - 2026-04-03
 
 ### Changed
 
-- Switched `apiMode: 'responses'` runtime wiring from `@ai-sdk/openai-compatible` to `@ai-sdk/open-responses`.
-- Updated provider/model runtime URLs so responses mode targets OmniRoute `/v1/responses` directly.
+- Switched `apiMode: 'responses'` runtime wiring from `@ai-sdk/openai-compatible` to `@ai-sdk/openai`.
+- Updated responses-mode runtime wiring to keep using the OmniRoute base URL and let the OpenAI SDK target `/v1/responses` natively.
 - Updated README configuration notes to document real runtime behavior for `responses` mode.
 
 ### Fixed
