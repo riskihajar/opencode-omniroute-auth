@@ -95,7 +95,7 @@ Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.
 |--------|------|----------|-------------|
 | `plugin` | string[] | No | npm plugin packages to load (use `@riskihajar/opencode-omniroute-auth` when installed from npm) |
 | `provider.omniroute.options.baseURL` | string | No | OmniRoute API base URL (default: `http://localhost:20128/v1`) |
-| `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | No | Provider API mode (default: `chat`) |
+| `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | No | Provider API mode (default: `chat`). `responses` switches provider runtime to `@ai-sdk/open-responses`. |
 | `provider.omniroute.options.modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
 | `provider.omniroute.options.refreshOnList` | boolean | No | Whether to refresh models when provider options load (default: true) |
 | `provider.omniroute.options.modelsDev` | object | No | Enrich model metadata from models.dev on refresh (default: enabled) |
@@ -202,8 +202,8 @@ Note: Some underlying models may not be found in `models.dev` (e.g., custom mode
 
 The plugin supports two provider API modes:
 
-- `chat` (default) - best compatibility with existing OpenAI-compatible chat workflows.
-- `responses` - enables Responses API mode when your OmniRoute/OpenCode setup supports it.
+- `chat` (default) - uses `@ai-sdk/openai-compatible` against the OmniRoute base URL.
+- `responses` - uses `@ai-sdk/open-responses` against the OmniRoute `/v1/responses` endpoint.
 
 Example:
 
@@ -220,6 +220,13 @@ Example:
 ```
 
 If an unsupported value is provided, the plugin falls back to `chat`.
+
+Internally, the plugin now switches both:
+
+- provider npm package
+- provider/model API URL
+
+so `apiMode: "responses"` is not just metadata; it changes the runtime provider implementation.
 
 ## Dynamic Model Fetching
 

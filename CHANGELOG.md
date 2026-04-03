@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.1] - 2026-04-03
+
+### Changed
+
+- Switched `apiMode: 'responses'` runtime wiring from `@ai-sdk/openai-compatible` to `@ai-sdk/open-responses`.
+- Updated provider/model runtime URLs so responses mode targets OmniRoute `/v1/responses` directly.
+- Updated README configuration notes to document real runtime behavior for `responses` mode.
+
+### Fixed
+
+- Fixed `apiMode: 'responses'` having no practical effect because upstream OpenAI-compatible provider always targeted `/chat/completions`.
+- Fixed OmniRoute responses compatibility by stripping unsupported token limit fields from `/responses` requests.
+
+### Verification
+
+- Verified local OpenCode config can load the plugin directly from the repository path for testing.
+- Verified `npm test` passes after provider/runtime switching and request normalization changes.
+
 ## [1.0.3] - 2026-03-01
 
 ### Added

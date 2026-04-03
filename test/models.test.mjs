@@ -16,6 +16,7 @@ const CONFIG = {
   apiKey: 'test-key',
   apiMode: 'chat',
   modelCacheTtl: 60000,
+  modelsDev: { enabled: false },
 };
 
 afterEach(() => {
@@ -26,7 +27,16 @@ afterEach(() => {
 test('fetchModels caches successful responses', async () => {
   let calls = 0;
 
-  global.fetch = async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/api/combos')) {
+      calls += 1;
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     calls += 1;
     return new Response(
       JSON.stringify({
@@ -43,7 +53,7 @@ test('fetchModels caches successful responses', async () => {
   const first = await fetchModels(CONFIG, CONFIG.apiKey, false);
   const second = await fetchModels(CONFIG, CONFIG.apiKey, false);
 
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.equal(first[0].id, 'gpt-4.1-mini');
   assert.equal(second[0].id, 'gpt-4.1-mini');
   assert.ok(getCachedModels(CONFIG, CONFIG.apiKey));
@@ -53,7 +63,16 @@ test('fetchModels caches successful responses', async () => {
 test('refreshModels forces refetch', async () => {
   let calls = 0;
 
-  global.fetch = async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/api/combos')) {
+      calls += 1;
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     calls += 1;
     return new Response(
       JSON.stringify({
@@ -70,8 +89,8 @@ test('refreshModels forces refetch', async () => {
   await fetchModels(CONFIG, CONFIG.apiKey, false);
   const refreshed = await refreshModels(CONFIG, CONFIG.apiKey);
 
-  assert.equal(calls, 2);
-  assert.equal(refreshed[0].id, 'model-2');
+  assert.equal(calls, 4);
+  assert.equal(refreshed[0].id, 'model-3');
 });
 
 test('fetchModels falls back to defaults when response shape is invalid', async () => {

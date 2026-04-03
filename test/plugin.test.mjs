@@ -39,6 +39,30 @@ test('config hook applies defaults and normalized apiMode', async () => {
   assert.equal(config.provider.omniroute.api, 'chat');
   assert.equal(config.provider.omniroute.options.apiMode, 'chat');
   assert.equal(config.provider.omniroute.options.baseURL, 'http://localhost:20128/v1');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1');
+});
+
+test('config hook switches provider package and URL for responses mode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.api, 'responses');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/open-responses');
+  assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1/responses');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/open-responses');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.url, 'http://localhost:20128/v1/responses');
 });
 
 test('loader injects auth headers only for OmniRoute URLs', async () => {
@@ -95,6 +119,38 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
 
   const externalHeaders = new Headers(externalCall.init?.headers);
   assert.equal(externalHeaders.get('Authorization'), null);
+});
+
+test('loader exposes full responses endpoint URL in responses mode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'responses',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.equal(options.baseURL, 'http://localhost:20128/v1');
+  assert.equal(options.url, 'http://localhost:20128/v1/responses');
 });
 
 test('gemini tool schema payload is sanitized before forwarding', async () => {
@@ -279,4 +335,55 @@ test('gemini schema sanitization applies to responses endpoint request objects',
   assert.ok(forwardedBody);
   assert.equal(forwardedBody.tools[0].input_schema.additionalProperties, undefined);
   assert.equal(forwardedBody.tools[0].input_schema.properties.query.items.additionalProperties, undefined);
+});
+
+test('responses payload strips unsupported token limit fields', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'gpt-4.1-mini',
+      input: 'test',
+      max_output_tokens: 2048,
+      max_tokens: 1024,
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.max_output_tokens, undefined);
+  assert.equal(forwardedBody.max_tokens, undefined);
 });

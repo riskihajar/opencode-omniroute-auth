@@ -16,7 +16,8 @@ import {
 import { fetchModels } from './models.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
-const OMNIROUTE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/open-responses';
 const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
 const DEBUG = process.env.OMNIROUTE_PLUGIN_DEBUG === '1';
 
@@ -39,16 +40,19 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const baseUrl = getBaseUrl(existingProvider?.options);
       const apiMode = getApiMode(existingProvider?.options);
       const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
+      const providerNpm = resolveProviderNpm(existingProvider?.npm, apiMode);
+      const providerUrl = getProviderUrl(baseUrl, apiMode);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
         ...existingProvider,
         name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
         api: providerApi,
-        npm: existingProvider?.npm ?? OMNIROUTE_PROVIDER_NPM,
+        npm: providerNpm,
         env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
         options: {
           ...(existingProvider?.options ?? {}),
           baseURL: baseUrl,
+          url: providerUrl,
           apiMode,
         },
         models:
@@ -112,6 +116,7 @@ async function loadProviderOptions(
   return {
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
+    url: getProviderUrl(config.baseUrl, config.apiMode),
     fetch: createFetchInterceptor(config),
   };
 }
@@ -151,6 +156,19 @@ function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteA
   return apiMode;
 }
 
+function resolveProviderNpm(npm: unknown, apiMode: OmniRouteApiMode): string {
+  const expected = getProviderNpm(apiMode);
+  if (typeof npm !== 'string' || npm.trim() === '') {
+    return expected;
+  }
+
+  if (npm !== expected) {
+    console.warn(`[OmniRoute] provider.npm (${npm}) does not match apiMode (${apiMode}). Using ${expected}.`);
+  }
+
+  return expected;
+}
+
 function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
   const value = options?.apiMode;
   if (value === undefined) {
@@ -167,6 +185,18 @@ function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
 
 function isApiMode(value: unknown): value is OmniRouteApiMode {
   return value === 'chat' || value === 'responses';
+}
+
+function getProviderNpm(apiMode: OmniRouteApiMode): string {
+  return apiMode === 'responses'
+    ? OMNIROUTE_RESPONSES_PROVIDER_NPM
+    : OMNIROUTE_CHAT_PROVIDER_NPM;
+}
+
+function getProviderUrl(baseUrl: string, apiMode: OmniRouteApiMode): string {
+  return apiMode === 'responses'
+    ? `${baseUrl.replace(/\/$/, '')}${OMNIROUTE_ENDPOINTS.RESPONSES}`
+    : baseUrl;
 }
 
 function getBaseUrl(options?: Record<string, unknown>): string {
@@ -336,6 +366,7 @@ function toProviderModel(
   baseUrl: string,
   config?: OmniRouteConfig,
 ): OmniRouteProviderModel {
+  const apiMode = config?.apiMode ?? 'chat';
   const supportsVision = model.supportsVision === true;
   const supportsTools = model.supportsTools !== false;
   const embeddedVariant = getEmbeddedReasoningVariant(model.id);
@@ -351,8 +382,8 @@ function toProviderModel(
     release_date: '',
     api: {
       id: model.id,
-      url: baseUrl,
-      npm: OMNIROUTE_PROVIDER_NPM,
+      url: getProviderUrl(baseUrl, apiMode),
+      npm: getProviderNpm(apiMode),
     },
     capabilities: {
       temperature: true,
@@ -596,11 +627,32 @@ async function transformRequestBody(
   }
 
   let changed = false;
+  changed = normalizeResponsesPayload(payload, url) || changed;
   changed = normalizeReasoningPayload(payload) || changed;
   changed = slimCodexPayload(payload) || changed;
   changed = sanitizeGeminiToolSchemas(payload) || changed;
 
   return changed ? JSON.stringify(payload) : undefined;
+}
+
+function normalizeResponsesPayload(payload: Record<string, unknown>, url: string): boolean {
+  if (!url.includes('/responses')) {
+    return false;
+  }
+
+  let changed = false;
+
+  if (payload.max_output_tokens !== undefined) {
+    delete payload.max_output_tokens;
+    changed = true;
+  }
+
+  if (payload.max_tokens !== undefined) {
+    delete payload.max_tokens;
+    changed = true;
+  }
+
+  return changed;
 }
 
 function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {
