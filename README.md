@@ -60,7 +60,7 @@ By default, the plugin refreshes the model list whenever provider options are re
 You can disable refreshes by setting `provider.omniroute.options.refreshOnList` to `false` and clear the cache programmatically:
 
 ```typescript
-import { clearModelCache } from 'opencode-omniroute-auth/runtime';
+import { clearModelCache } from '@riskihajar/opencode-omniroute-auth/runtime';
 
 clearModelCache();
 ```
@@ -93,7 +93,7 @@ Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
-| `plugin` | string[] | No | npm plugin packages to load (use `opencode-omniroute-auth` when installed from npm) |
+| `plugin` | string[] | No | npm plugin packages to load (use `@riskihajar/opencode-omniroute-auth` when installed from npm) |
 | `provider.omniroute.options.baseURL` | string | No | OmniRoute API base URL (default: `http://localhost:20128/v1`) |
 | `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | No | Provider API mode (default: `chat`) |
 | `provider.omniroute.options.modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
@@ -252,7 +252,7 @@ import type {
   OmniRouteModel,
   OmniRouteModelMetadataConfig,
   OmniRouteModelsDevConfig,
-} from "opencode-omniroute-auth";
+} from "@riskihajar/opencode-omniroute-auth";
 
 interface OmniRouteConfig {
   baseUrl: string;
@@ -295,7 +295,7 @@ import {
   fetchComboData,
   resolveUnderlyingModels,
   calculateModelCapabilities,
-} from 'opencode-omniroute-auth/runtime';
+} from '@riskihajar/opencode-omniroute-auth/runtime';
 
 // Fetch models manually (with automatic enrichment)
 const models = await fetchModels(config, apiKey);
@@ -315,7 +315,7 @@ import {
   fetchModels,
   clearModelCache,
   refreshModels,
-} from 'opencode-omniroute-auth/runtime';
+} from '@riskihajar/opencode-omniroute-auth/runtime';
 
 // Fetch models manually
 const models = await fetchModels(config, apiKey);
@@ -360,15 +360,15 @@ If models aren't loading:
 1. Check your OmniRoute `/v1/models` endpoint is accessible
 2. Ensure `provider.omniroute.options.baseURL` points to your OmniRoute endpoint
 3. Re-run `/connect omniroute` to refresh your API key
-4. If you use the package programmatically, call `clearModelCache()` from `opencode-omniroute-auth/runtime`
+4. If you use the package programmatically, call `clearModelCache()` from `@riskihajar/opencode-omniroute-auth/runtime`
 5. Check the OpenCode logs for error messages
 
 ### Plugin Not Loading Outside This Repo
 
 If the plugin loads only through a local shim (for example from `.opencode/plugins` or `.opencode/plugi`) but not from npm in `opencode.json`:
 
-1. Ensure you are using `opencode-omniroute-auth@1.0.1` or newer
-2. Confirm your config includes `"plugin": ["opencode-omniroute-auth"]`
+1. Ensure you are using `@riskihajar/opencode-omniroute-auth@1.2.0` or newer
+2. Confirm your config includes `"plugin": ["@riskihajar/opencode-omniroute-auth"]`
 3. Restart OpenCode so npm plugins are reloaded
 4. Check plugin install cache/logs under `~/.cache/opencode/node_modules`
 
