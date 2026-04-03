@@ -182,6 +182,117 @@ test('responses mode exposes generated reasoning variants for reasoning-capable 
   });
 });
 
+test('responses mode falls back anthropic-family models to chat provider runtime', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'antigravity/claude-opus-4-1': {
+            name: 'Claude Opus 4.1',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 200000,
+              output: 8192,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.url, 'http://localhost:20128/v1');
+});
+
+test('per-model apiMode override forces chat runtime even when global mode is responses', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+          modelMetadata: {
+            'minimax/minimax-m1': {
+              apiMode: 'chat',
+            },
+          },
+        },
+        models: {
+          'minimax/minimax-m1': {
+            name: 'MiniMax M1',
+            apiMode: 'chat',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: false,
+            },
+            limit: {
+              context: 1000000,
+              output: 8000,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.options.modelMetadata['minimax/minimax-m1'].apiMode, 'chat');
+  assert.equal(config.provider.omniroute.models['minimax/minimax-m1'].api.npm, '@ai-sdk/openai-compatible');
+});
+
+test('per-model apiMode override can keep anthropic-family model on responses runtime', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+          modelMetadata: {
+            'antigravity/claude-opus-4-1': {
+              apiMode: 'responses',
+            },
+          },
+        },
+        models: {
+          'antigravity/claude-opus-4-1': {
+            name: 'Claude Opus 4.1',
+            apiMode: 'responses',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 200000,
+              output: 8192,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.options.modelMetadata['antigravity/claude-opus-4-1'].apiMode, 'responses');
+  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai');
+});
+
 test('loader injects auth headers only for OmniRoute URLs', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const calls = [];

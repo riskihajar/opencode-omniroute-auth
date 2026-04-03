@@ -59,6 +59,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           baseURL: baseUrl,
           url: providerUrl,
           apiMode,
+          modelMetadata: configuredModelMetadata,
         },
         models: toProviderModels(
           getConfigSeedModels(existingProvider?.models),
@@ -202,6 +203,37 @@ function getProviderNpm(apiMode: OmniRouteApiMode): string {
     : OMNIROUTE_CHAT_PROVIDER_NPM;
 }
 
+function getEffectiveApiModeForModel(
+  model: OmniRouteModel,
+  requestedApiMode: OmniRouteApiMode,
+): OmniRouteApiMode {
+  if (model.apiMode) {
+    return model.apiMode;
+  }
+
+  if (requestedApiMode !== 'responses') {
+    return requestedApiMode;
+  }
+
+  return supportsResponsesApiStreaming(model.id) ? 'responses' : 'chat';
+}
+
+function supportsResponsesApiStreaming(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+
+  if (
+    id.includes('claude') ||
+    id.includes('anthropic') ||
+    id.includes('opus') ||
+    id.includes('sonnet') ||
+    id.includes('haiku')
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 function getProviderUrl(baseUrl: string, apiMode: OmniRouteApiMode): string {
   return baseUrl;
 }
@@ -332,9 +364,9 @@ function getProviderModelMetadataConfig(
     }
 
     if (isRecord(raw.capabilities)) {
-      if (typeof raw.capabilities.reasoning === 'boolean') {
-        next.reasoning = raw.capabilities.reasoning;
-      }
+    if (typeof raw.capabilities.reasoning === 'boolean') {
+      next.reasoning = raw.capabilities.reasoning;
+    }
       if (typeof raw.capabilities.toolcall === 'boolean') {
         next.supportsTools = raw.capabilities.toolcall;
       }
@@ -345,6 +377,14 @@ function getProviderModelMetadataConfig(
 
     if (isRecord(raw.variants) && Object.keys(raw.variants).length > 0) {
       next.variants = raw.variants;
+    }
+
+    if (raw.api === 'chat' || raw.api === 'responses') {
+      next.apiMode = raw.api;
+    }
+
+    if (raw.apiMode === 'chat' || raw.apiMode === 'responses') {
+      next.apiMode = raw.apiMode;
     }
 
     if (Object.keys(next).length > 0) {
@@ -457,6 +497,12 @@ function getConfigSeedModels(models: unknown): OmniRouteModel[] {
         typeof capabilities?.attachment === 'boolean' ? capabilities.attachment : undefined,
       supportsTools:
         typeof capabilities?.toolcall === 'boolean' ? capabilities.toolcall : undefined,
+      apiMode:
+        metadata.api === 'chat' || metadata.api === 'responses'
+          ? metadata.api
+          : metadata.apiMode === 'chat' || metadata.apiMode === 'responses'
+            ? metadata.apiMode
+            : undefined,
       reasoning:
         typeof capabilities?.reasoning === 'boolean' ? capabilities.reasoning : undefined,
       variants:
@@ -488,7 +534,7 @@ function toProviderModel(
   baseUrl: string,
   config?: OmniRouteConfig,
 ): OmniRouteProviderModel {
-  const apiMode = config?.apiMode ?? 'chat';
+  const apiMode = getEffectiveApiModeForModel(model, config?.apiMode ?? 'chat');
   const supportsVision = model.supportsVision === true;
   const supportsTools = model.supportsTools !== false;
   const embeddedVariant = getEmbeddedReasoningVariant(model.id);

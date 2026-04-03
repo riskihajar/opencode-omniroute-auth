@@ -333,6 +333,7 @@ function mergeModelMetadata(model: OmniRouteModel, metadata: OmniRouteModelMetad
     ...(metadata.supportsStreaming !== undefined ? { supportsStreaming: metadata.supportsStreaming } : {}),
     ...(metadata.supportsVision !== undefined ? { supportsVision: metadata.supportsVision } : {}),
     ...(metadata.supportsTools !== undefined ? { supportsTools: metadata.supportsTools } : {}),
+    ...(metadata.apiMode !== undefined ? { apiMode: metadata.apiMode } : {}),
     ...(metadata.reasoning !== undefined ? { reasoning: metadata.reasoning } : {}),
     ...(metadata.variants !== undefined ? { variants: metadata.variants } : {}),
     ...(metadata.pricing !== undefined ? { pricing: metadata.pricing } : {}),

@@ -10,6 +10,8 @@ export interface OmniRouteModel {
   supportsStreaming?: boolean;
   supportsVision?: boolean;
   supportsTools?: boolean;
+  /** Optional per-model API mode override */
+  apiMode?: OmniRouteApiMode;
   /** Whether the model supports reasoning effort controls */
   reasoning?: boolean;
   /** Optional OpenCode variant definitions for this model */
@@ -28,6 +30,8 @@ export interface OmniRouteModelMetadata {
   supportsStreaming?: boolean;
   supportsVision?: boolean;
   supportsTools?: boolean;
+  /** Optional per-model API mode override */
+  apiMode?: OmniRouteApiMode;
   /** Mark model as supporting reasoning effort controls */
   reasoning?: boolean;
   /** Optional explicit variant map exposed to OpenCode */

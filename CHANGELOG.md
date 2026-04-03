@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.3] - 2026-04-03
+
+### Added
+
+- Added per-model `apiMode` overrides through `modelMetadata` and seeded `provider.omniroute.models` entries.
+
+### Changed
+
+- Updated README with per-model `apiMode` override examples and guidance for mixed provider backends.
+
+### Fixed
+
+- Fixed mixed-backend OmniRoute setups where some routed models need `chat` runtime while others work with `responses`.
+- Fixed Anthropic/Opus-style routed models failing under Responses streaming validation by allowing targeted per-model fallback/override behavior.
+
+### Verification
+
+- Verified `npm test` passes after per-model runtime override support.
+
 ## [1.2.2] - 2026-04-03
 
 ### Changed

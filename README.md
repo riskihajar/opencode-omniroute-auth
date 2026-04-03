@@ -141,7 +141,7 @@ Minimal example:
 | `provider.omniroute.options.refreshOnList` | `boolean` | Refresh model list on provider load. Default: `true` |
 | `provider.omniroute.options.modelCacheTtl` | `number` | Cache TTL in ms |
 | `provider.omniroute.options.modelsDev` | `object` | Configure models.dev enrichment |
-| `provider.omniroute.options.modelMetadata` | `object \| array` | Override/add model metadata |
+| `provider.omniroute.options.modelMetadata` | `object \| array` | Override/add model metadata, including per-model `apiMode` |
 
 ## API modes
 
@@ -176,6 +176,56 @@ Example:
   }
 }
 ```
+
+### Per-model `apiMode` override
+
+Not every routed model behaves the same way behind OmniRoute.
+
+Some models work best with Responses API, while others still stream in Chat Completions shape even when the provider is globally configured for `responses`.
+
+Because of that, this plugin supports **per-model `apiMode` overrides**.
+
+Example: keep global `responses`, but pin a specific model to `chat`:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "apiMode": "responses",
+        "modelMetadata": {
+          "minimax/minimax-m1": {
+            "apiMode": "chat"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Example: force a specific model to stay on `responses`:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "apiMode": "responses",
+        "modelMetadata": {
+          "some-provider/some-model": {
+            "apiMode": "responses"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+You can also set `apiMode` directly inside `provider.omniroute.models` entries when you define custom seeded models.
+
+By default, the plugin still applies a conservative fallback for known models that appear to break under Responses streaming, but an explicit per-model override wins.
 
 ## Reasoning variants
 
@@ -261,7 +311,8 @@ JSON example:
         "modelMetadata": {
           "virtual/my-custom-model": {
             "contextWindow": 50000,
-            "maxTokens": 2048
+            "maxTokens": 2048,
+            "apiMode": "chat"
           }
         }
       }
