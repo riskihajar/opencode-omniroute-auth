@@ -332,6 +332,14 @@ function deriveModelsDevFamilies(
     matches.push({ providerAlias, modelKey: candidateModelKey });
   };
 
+  if (strippedLower.startsWith('gemini-')) {
+    add('google', stripped);
+  }
+
+  if (strippedLower.startsWith('claude-')) {
+    add('anthropic', stripped);
+  }
+
   if (providerAlias) {
     add(providerAlias, modelKey);
     if (strippedLower !== lower) add(providerAlias, stripped);
@@ -369,9 +377,19 @@ function deriveModelsDevFamilies(
 }
 
 function stripVariantSuffixes(modelKey: string): string {
-  return modelKey
-    .replace(/-(thinking|reasoning)$/i, '')
-    .replace(/-(minimal|low|medium|high|max|xhigh|none)$/i, '');
+  let normalized = modelKey;
+
+  while (true) {
+    const next = normalized
+      .replace(/-(thinking|reasoning)$/i, '')
+      .replace(/-(minimal|low|medium|high|max|xhigh|none)$/i, '');
+
+    if (next === normalized) {
+      return next;
+    }
+
+    normalized = next;
+  }
 }
 
 function applyConfiguredModelMetadata(

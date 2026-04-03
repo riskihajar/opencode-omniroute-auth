@@ -1090,6 +1090,10 @@ function wrapGeminiToolsAsFunctionDeclarations(payload: Record<string, unknown>)
       (isRecord(tool.inputSchema) ? tool.inputSchema : undefined) ??
       { type: 'OBJECT', properties: {} };
 
+    if (isRecord(parameters)) {
+      stripSchemaKeys(parameters);
+    }
+
     functionDeclarations.push({
       name,
       description,
@@ -1292,6 +1296,15 @@ function sanitizeToolSchemaContainer(payload: Record<string, unknown>): boolean 
 
     if (isRecord(tool.input_schema)) {
       changed = stripSchemaKeys(tool.input_schema) || changed;
+    }
+
+    const functionDeclarations = tool.functionDeclarations;
+    if (Array.isArray(functionDeclarations)) {
+      for (const declaration of functionDeclarations) {
+        if (isRecord(declaration) && isRecord(declaration.parameters)) {
+          changed = stripSchemaKeys(declaration.parameters) || changed;
+        }
+      }
     }
   }
 
