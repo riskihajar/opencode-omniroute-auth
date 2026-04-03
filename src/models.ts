@@ -5,8 +5,12 @@ import {
   MODEL_CACHE_TTL,
   REQUEST_TIMEOUT,
 } from './constants.js';
-import { getModelsDevIndex, normalizeModelKey, type ModelsDevModel } from './models-dev.js';
-import type { ModelsDevIndex } from './models-dev.js';
+import {
+  getModelsDevIndex,
+  normalizeModelKey,
+  type ModelsDevIndex,
+  type ModelsDevModel,
+} from './models-dev.js';
 import { enrichComboModels, clearComboCache } from './omniroute-combos.js';
 
 /**
@@ -110,6 +114,8 @@ export async function fetchModels(
         // Ensure required fields
         id: model.id,
         name: model.name || model.id,
+        root: typeof model.root === 'string' ? model.root : undefined,
+        owned_by: typeof model.owned_by === 'string' ? model.owned_by : undefined,
         description: model.description || `OmniRoute model: ${model.id}`,
         // Keep undefined for enrichment to work properly
         contextWindow: model.contextWindow,
@@ -237,36 +243,135 @@ function applyModelsDevMetadata(
   config: OmniRouteConfig,
   index: ModelsDevIndex,
 ): OmniRouteModel {
-  const { providerKey, modelKey } = splitOmniRouteModelForLookup(model.id);
-  const providerAlias = resolveProviderAlias(providerKey, config);
-  const lookupKey = modelKey.toLowerCase();
-  const normalizedKey = normalizeModelKey(modelKey);
-
-  // Try provider-specific exact match first
-  const providerExact = providerAlias
-    ? index.exactByProvider.get(providerAlias)?.get(lookupKey)
-    : undefined;
-
-  // Try provider-specific normalized match
-  const providerNorm = providerAlias
-    ? index.normalizedByProvider.get(providerAlias)?.get(normalizedKey)
-    : undefined;
-
-  // Try global exact match (only if single match to avoid ambiguity)
-  const globalExactList = index.exactGlobal.get(lookupKey);
-  const globalExact = globalExactList?.length === 1 ? globalExactList[0] : undefined;
-
-  // Try global normalized match (only if single match to avoid ambiguity)
-  const globalNormList = index.normalizedGlobal.get(normalizedKey);
-  const globalNorm = globalNormList?.length === 1 ? globalNormList[0] : undefined;
-
-  // Pick the best match (provider-specific preferred over global)
-  const best = providerExact ?? providerNorm ?? globalExact ?? globalNorm;
+  const candidates = getModelsDevLookupCandidates(model, config);
+  const best = findBestModelsDevMatch(candidates, index);
 
   if (!best) return model;
 
   // Merge capabilities (only fill in missing values)
   return mergeModelMetadata(model, metadataFromModelsDev(best));
+}
+
+function findBestModelsDevMatch(
+  candidates: Array<{ providerAlias: string | null; modelKey: string }>,
+  index: ModelsDevIndex,
+): ModelsDevModel | undefined {
+  for (const candidate of candidates) {
+    const lookupKey = candidate.modelKey.toLowerCase();
+    const normalizedKey = normalizeModelKey(candidate.modelKey);
+
+    const providerExact = candidate.providerAlias
+      ? index.exactByProvider.get(candidate.providerAlias)?.get(lookupKey)
+      : undefined;
+    if (providerExact) return providerExact;
+
+    const providerNorm = candidate.providerAlias
+      ? index.normalizedByProvider.get(candidate.providerAlias)?.get(normalizedKey)
+      : undefined;
+    if (providerNorm) return providerNorm;
+
+    const globalExactList = index.exactGlobal.get(lookupKey);
+    if (globalExactList?.length === 1) return globalExactList[0];
+
+    const globalNormList = index.normalizedGlobal.get(normalizedKey);
+    if (globalNormList?.length === 1) return globalNormList[0];
+  }
+
+  return undefined;
+}
+
+function getModelsDevLookupCandidates(
+  model: OmniRouteModel,
+  config: OmniRouteConfig,
+): Array<{ providerAlias: string | null; modelKey: string }> {
+  const { providerKey, modelKey } = splitOmniRouteModelForLookup(model.id);
+  const providerAlias = resolveProviderAlias(providerKey, config);
+  const candidates: Array<{ providerAlias: string | null; modelKey: string }> = [];
+  const seen = new Set<string>();
+
+  const addCandidate = (nextProviderAlias: string | null, nextModelKey: string | null | undefined): void => {
+    if (!nextModelKey) return;
+    const trimmedModelKey = nextModelKey.trim();
+    if (!trimmedModelKey) return;
+
+    const normalizedProvider = nextProviderAlias ? nextProviderAlias.toLowerCase() : 'global';
+    const signature = `${normalizedProvider}:${trimmedModelKey.toLowerCase()}`;
+    if (seen.has(signature)) return;
+    seen.add(signature);
+    candidates.push({ providerAlias: nextProviderAlias, modelKey: trimmedModelKey });
+  };
+
+  const lookupRoots = [model.root, modelKey].filter(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  );
+
+  for (const lookupRoot of lookupRoots) {
+    addCandidate(providerAlias, lookupRoot);
+    addCandidate(null, lookupRoot);
+
+    for (const derived of deriveModelsDevFamilies(lookupRoot, providerAlias, model.owned_by)) {
+      addCandidate(derived.providerAlias, derived.modelKey);
+      addCandidate(null, derived.modelKey);
+    }
+  }
+
+  return candidates;
+}
+
+function deriveModelsDevFamilies(
+  modelKey: string,
+  providerAlias: string | null,
+  ownedBy?: string,
+): Array<{ providerAlias: string; modelKey: string }> {
+  const lower = modelKey.toLowerCase();
+  const stripped = stripVariantSuffixes(modelKey);
+  const strippedLower = stripped.toLowerCase();
+  const matches: Array<{ providerAlias: string; modelKey: string }> = [];
+
+  const add = (providerAlias: string, candidateModelKey: string): void => {
+    matches.push({ providerAlias, modelKey: candidateModelKey });
+  };
+
+  if (providerAlias) {
+    add(providerAlias, modelKey);
+    if (strippedLower !== lower) add(providerAlias, stripped);
+  }
+
+  if (ownedBy) {
+    add(ownedBy.toLowerCase(), modelKey);
+    if (strippedLower !== lower) add(ownedBy.toLowerCase(), stripped);
+  }
+
+  if (lower.startsWith('claude-')) {
+    add('anthropic', modelKey);
+    if (strippedLower !== lower) add('anthropic', stripped);
+  }
+
+  if (lower.startsWith('gemini-')) {
+    add('google', modelKey);
+    if (strippedLower !== lower) add('google', stripped);
+  }
+
+  if (
+    lower.startsWith('gpt-') ||
+    lower.startsWith('o1') ||
+    lower.startsWith('o3') ||
+    lower.startsWith('o4') ||
+    lower.startsWith('oai-') ||
+    lower.startsWith('codex-') ||
+    lower.startsWith('gpt-oss-')
+  ) {
+    add('openai', modelKey);
+    if (strippedLower !== lower) add('openai', stripped);
+  }
+
+  return matches;
+}
+
+function stripVariantSuffixes(modelKey: string): string {
+  return modelKey
+    .replace(/-(thinking|reasoning)$/i, '')
+    .replace(/-(minimal|low|medium|high|max|xhigh|none)$/i, '');
 }
 
 function applyConfiguredModelMetadata(
@@ -404,6 +509,7 @@ function resolveProviderAlias(
     openai: 'openai',
     cx: 'openai',
     codex: 'openai',
+    antigravity: 'anthropic',
     anthropic: 'anthropic',
     claude: 'anthropic',
     gemini: 'google',

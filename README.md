@@ -29,6 +29,7 @@ This package exists for teams actually running OmniRoute in OpenCode and needing
   - merges generated variants with custom ones like `xhigh`
 - **OmniRoute-aware model metadata enrichment**
   - `models.dev` enrichment for context/output limits
+  - routed-provider matching using OmniRoute `root` / `owned_by` metadata
   - combo model lowest-common-capability calculation
 - **Safer OpenCode runtime behavior**
   - provider bootstrap normalization
@@ -56,6 +57,7 @@ This package is for shipping OmniRoute-specific fixes without waiting for a gene
 - ✅ `chat` and `responses` runtime modes
 - ✅ reasoning variant support for OmniRoute reasoning models
 - ✅ request normalization for OmniRoute Responses API quirks
+- ✅ routed model enrichment for Anthropic/Gemini families behind providers like `antigravity`
 
 ## Installation
 
@@ -227,6 +229,12 @@ You can also set `apiMode` directly inside `provider.omniroute.models` entries w
 
 By default, the plugin still applies a conservative fallback for known models that appear to break under Responses streaming, but an explicit per-model override wins.
 
+Current built-in fallback behavior in global `responses` mode:
+
+- Anthropic-family routed models such as Claude / Opus / Sonnet / Haiku fall back to `chat`
+- Gemini-family routed models fall back to `chat`
+- suffixes like `-thinking`, `-reasoning`, `-high`, `-medium`, `-low`, `-minimal`, `-max`, `-xhigh`, and `-none` are normalized before that decision
+
 ## Reasoning variants
 
 For reasoning-capable models, this plugin can expose variants like:
@@ -274,6 +282,13 @@ This plugin can enrich models with data derived from `models.dev`, especially:
 - output token limit
 - tool support
 - reasoning support
+
+It also tries harder to resolve routed OmniRoute models by:
+
+- checking the listed model `id`
+- checking OmniRoute `root`
+- normalizing runtime suffixes like `-thinking` or `-high`
+- mapping routed provider aliases such as `antigravity` to the most likely upstream family when matching `models.dev`
 
 Example:
 

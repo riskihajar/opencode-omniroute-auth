@@ -221,6 +221,9 @@ export function normalizeModelKey(modelId: string): string {
     .replace(/-v\d+$/, '')
     // Remove common preview suffixes
     .replace(/-(preview|latest|stable)$/i, '')
+    // Remove routed-provider reasoning / effort suffixes
+    .replace(/-(thinking|reasoning)$/i, '')
+    .replace(/-(minimal|low|medium|high|max|xhigh|none)$/i, '')
     // Remove numbered versions like -4.5
     .replace(/-\d+\.\d+$/, '')
     // Normalize underscores to hyphens
@@ -359,6 +362,7 @@ export function resolveProviderAlias(
     openai: 'openai',
     cx: 'openai',
     codex: 'openai',
+    antigravity: 'anthropic',
     anthropic: 'anthropic',
     claude: 'anthropic',
     gemini: 'google',

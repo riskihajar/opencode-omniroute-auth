@@ -2,6 +2,7 @@ import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import OmniRouteAuthPlugin from '../dist/index.js';
+import { fetchModels } from '../dist/runtime.js';
 
 const ORIGINAL_FETCH = global.fetch;
 
@@ -194,6 +195,7 @@ test('responses mode falls back anthropic-family models to chat provider runtime
         models: {
           'antigravity/claude-opus-4-1': {
             name: 'Claude Opus 4.1',
+            root: 'claude-opus-4-1-thinking',
             capabilities: {
               reasoning: true,
               toolcall: true,
@@ -213,6 +215,39 @@ test('responses mode falls back anthropic-family models to chat provider runtime
 
   assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai-compatible');
   assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.url, 'http://localhost:20128/v1');
+});
+
+test('responses mode falls back antigravity gemini models to chat provider runtime', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'antigravity/gemini-3.1-pro-high': {
+            name: 'Gemini 3.1 Pro High',
+            root: 'gemini-3.1-pro-high',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 1048576,
+              output: 65535,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm, '@ai-sdk/openai-compatible');
 });
 
 test('per-model apiMode override forces chat runtime even when global mode is responses', async () => {
@@ -440,7 +475,7 @@ test('gemini tool schema payload is sanitized before forwarding', async () => {
   });
 
   assert.ok(forwardedBody);
-  const params = forwardedBody.tools[0].function.parameters;
+  const params = forwardedBody.tools[0].functionDeclarations[0].parameters;
   assert.equal(params.$schema, undefined);
   assert.equal(params.additionalProperties, undefined);
   assert.equal(params.properties.query.items.$ref, undefined);
@@ -561,8 +596,14 @@ test('gemini schema sanitization applies to responses endpoint request objects',
   await interceptedFetch(request);
 
   assert.ok(forwardedBody);
-  assert.equal(forwardedBody.tools[0].input_schema.additionalProperties, undefined);
-  assert.equal(forwardedBody.tools[0].input_schema.properties.query.items.additionalProperties, undefined);
+  assert.equal(
+    forwardedBody.tools[0].functionDeclarations[0].parameters.additionalProperties,
+    undefined,
+  );
+  assert.equal(
+    forwardedBody.tools[0].functionDeclarations[0].parameters.properties.query.items.additionalProperties,
+    undefined,
+  );
 });
 
 test('responses payload strips unsupported token limit fields', async () => {
@@ -719,4 +760,363 @@ test('responses payload converts reasoningEffort into reasoning object before cl
   assert.ok(forwardedBody);
   assert.equal(forwardedBody.reasoningEffort, undefined);
   assert.deepEqual(forwardedBody.reasoning, { effort: 'medium' });
+});
+
+test('models.dev enrichment matches antigravity claude variants to anthropic limits', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'antigravity/claude-opus-4-6-thinking',
+            name: 'Claude Opus 4.6 Thinking',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://models.dev/api.json') {
+      return new Response(JSON.stringify({
+        anthropic: {
+          models: {
+            'claude-opus-4-6': {
+              limit: {
+                context: 200000,
+                output: 64000,
+              },
+              modalities: {
+                input: ['text', 'image'],
+              },
+              tool_call: true,
+              reasoning: true,
+            },
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const models = await fetchModels({
+    baseUrl: 'http://localhost:20128/v1',
+    apiKey: 'secret-key',
+    apiMode: 'chat',
+    modelsDev: {
+      enabled: true,
+      url: 'https://models.dev/api.json',
+      cacheTtl: 1,
+    },
+  }, 'secret-key', true);
+
+  assert.equal(models[0].contextWindow, 200000);
+  assert.equal(models[0].maxTokens, 64000);
+  assert.equal(models[0].supportsVision, true);
+});
+
+test('models.dev enrichment matches antigravity gemini variants to google limits', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'antigravity/gemini-3.1-pro-high',
+            name: 'Gemini 3.1 Pro High',
+            root: 'gemini-3.1-pro-high',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://models.dev/api.json') {
+      return new Response(JSON.stringify({
+        google: {
+          models: {
+            'gemini-3.1-pro': {
+              limit: {
+                context: 1048576,
+                output: 65535,
+              },
+              modalities: {
+                input: ['text', 'image'],
+              },
+              tool_call: true,
+            },
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const models = await fetchModels({
+    baseUrl: 'http://localhost:20128/v1',
+    apiKey: 'secret-key',
+    apiMode: 'chat',
+    modelsDev: {
+      enabled: true,
+      url: 'https://models.dev/api.json',
+      cacheTtl: 1,
+    },
+  }, 'secret-key', true);
+
+  assert.equal(models[0].contextWindow, 1048576);
+  assert.equal(models[0].maxTokens, 65535);
+  assert.equal(models[0].supportsVision, true);
+});
+
+test('gemini payload preserves thought_signature for tool call parts', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'antigravity/gemini-3.1-pro-high',
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'default_api:bash',
+            parameters: {
+              type: 'object',
+              properties: {},
+            },
+          },
+        },
+      ],
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCall: {
+                toolName: 'default_api:bash',
+                args: '{}',
+                thoughtSignature: 'abc123',
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  assert.equal(
+    forwardedBody.messages[0].content[0].toolCall.thought_signature,
+    'abc123',
+  );
+  assert.equal(forwardedBody.messages[0].content[0].thought_signature, 'abc123');
+});
+
+test('gemini payload copies thought_signature into input function call items', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'antigravity/gemini-3.1-pro-high',
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCall: {
+                toolName: 'default_api:bash',
+                args: '{}',
+                thoughtSignature: 'sig-1',
+              },
+            },
+          ],
+        },
+      ],
+      input: [
+        {
+          type: 'function_call',
+          name: 'default_api:bash',
+          arguments: '{}',
+        },
+      ],
+    }),
+  });
+
+  assert.equal(forwardedBody.input[0].thought_signature, 'sig-1');
+});
+
+test('gemini tools are wrapped as functionDeclarations', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'antigravity/gemini-3.1-pro-high',
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'default_api:bash',
+            description: 'Run a bash command',
+            parameters: {
+              type: 'object',
+              properties: {
+                command: { type: 'string' },
+              },
+              required: ['command'],
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  assert.deepEqual(forwardedBody.tools, [
+    {
+      functionDeclarations: [
+        {
+          name: 'default_api:bash',
+          description: 'Run a bash command',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string' },
+            },
+            required: ['command'],
+          },
+        },
+      ],
+    },
+  ]);
 });

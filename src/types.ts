@@ -4,6 +4,8 @@
 export interface OmniRouteModel {
   id: string;
   name: string;
+  root?: string;
+  owned_by?: string;
   description?: string;
   contextWindow?: number;
   maxTokens?: number;

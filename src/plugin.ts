@@ -220,18 +220,26 @@ function getEffectiveApiModeForModel(
 
 function supportsResponsesApiStreaming(modelId: string): boolean {
   const id = modelId.toLowerCase();
+  const baseModelId = stripModelRuntimeSuffixes(id);
 
   if (
-    id.includes('claude') ||
-    id.includes('anthropic') ||
-    id.includes('opus') ||
-    id.includes('sonnet') ||
-    id.includes('haiku')
+    baseModelId.includes('claude') ||
+    baseModelId.includes('anthropic') ||
+    baseModelId.includes('opus') ||
+    baseModelId.includes('sonnet') ||
+    baseModelId.includes('haiku') ||
+    baseModelId.includes('gemini')
   ) {
     return false;
   }
 
   return true;
+}
+
+function stripModelRuntimeSuffixes(modelId: string): string {
+  return modelId
+    .replace(/-(thinking|reasoning)$/i, '')
+    .replace(/-(minimal|low|medium|high|max|xhigh|none)$/i, '');
 }
 
 function getProviderUrl(baseUrl: string, apiMode: OmniRouteApiMode): string {
@@ -858,17 +866,249 @@ function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {
     return false;
   }
 
+  let changed = preserveGeminiThoughtSignatures(payload);
+  changed = wrapGeminiToolsAsFunctionDeclarations(payload) || changed;
+
   const tools = payload.tools;
   if (!Array.isArray(tools) || tools.length === 0) {
-    return false;
+    return changed;
   }
 
-  const changed = sanitizeToolSchemaContainer(payload);
+  changed = sanitizeToolSchemaContainer(payload) || changed;
   if (changed) {
     debugLog('[OmniRoute] Sanitized Gemini tool schema keywords');
   }
 
   return changed;
+}
+
+function preserveGeminiThoughtSignatures(payload: Record<string, unknown>): boolean {
+  let changed = false;
+
+  const signatures = collectGeminiThoughtSignatures(payload);
+  if (signatures.length === 0) {
+    return false;
+  }
+
+  if (Array.isArray(payload.messages)) {
+    for (const message of payload.messages) {
+      if (!isRecord(message) || !Array.isArray(message.content)) {
+        continue;
+      }
+
+      for (const part of message.content) {
+        if (!isRecord(part)) continue;
+
+        const toolCall = isRecord(part.toolCall) ? part.toolCall : undefined;
+        const functionCall = isRecord(part.functionCall) ? part.functionCall : undefined;
+        const source = toolCall ?? functionCall;
+        if (!source) continue;
+
+        const signature =
+          typeof source.thought_signature === 'string'
+            ? source.thought_signature
+            : typeof source.thoughtSignature === 'string'
+              ? source.thoughtSignature
+              : typeof part.thought_signature === 'string'
+                ? part.thought_signature
+                : typeof part.thoughtSignature === 'string'
+                  ? part.thoughtSignature
+                  : signatures[0];
+
+        if (!signature) continue;
+
+        if (toolCall && typeof toolCall.thought_signature !== 'string') {
+          toolCall.thought_signature = signature;
+          changed = true;
+        }
+
+        if (functionCall && typeof functionCall.thought_signature !== 'string') {
+          functionCall.thought_signature = signature;
+          changed = true;
+        }
+
+        if (typeof part.thought_signature !== 'string') {
+          part.thought_signature = signature;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  changed = normalizeGeminiInputThoughtSignatures(payload.input, signatures) || changed;
+
+  return changed;
+}
+
+function collectGeminiThoughtSignatures(payload: Record<string, unknown>): string[] {
+  const signatures = new Set<string>();
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+
+  const collectFromPart = (part: unknown): void => {
+    if (!isRecord(part)) return;
+
+    const candidates = [
+      part.thought_signature,
+      part.thoughtSignature,
+      isRecord(part.toolCall) ? part.toolCall.thought_signature : undefined,
+      isRecord(part.toolCall) ? part.toolCall.thoughtSignature : undefined,
+      isRecord(part.functionCall) ? part.functionCall.thought_signature : undefined,
+      isRecord(part.functionCall) ? part.functionCall.thoughtSignature : undefined,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim() !== '') {
+        signatures.add(candidate);
+      }
+    }
+  };
+
+  for (const message of messages) {
+    if (!isRecord(message) || !Array.isArray(message.content)) {
+      continue;
+    }
+
+    for (const part of message.content) {
+      collectFromPart(part);
+    }
+  }
+
+  return [...signatures];
+}
+
+function normalizeGeminiInputThoughtSignatures(input: unknown, signatures: string[]): boolean {
+  if (!Array.isArray(input) || signatures.length === 0) {
+    return false;
+  }
+
+  let changed = false;
+  let signatureIndex = 0;
+
+  for (const item of input) {
+    if (!isRecord(item)) continue;
+
+    const type = typeof item.type === 'string' ? item.type : '';
+    const functionCall = isRecord(item.functionCall) ? item.functionCall : undefined;
+    const likelyFunctionCall =
+      type === 'function_call' ||
+      type === 'functionCall' ||
+      functionCall !== undefined ||
+      (typeof item.name === 'string' && item.arguments !== undefined);
+
+    if (!likelyFunctionCall) continue;
+
+    const existing =
+      typeof item.thought_signature === 'string'
+        ? item.thought_signature
+        : typeof item.thoughtSignature === 'string'
+          ? item.thoughtSignature
+          : functionCall && typeof functionCall.thought_signature === 'string'
+            ? functionCall.thought_signature
+            : functionCall && typeof functionCall.thoughtSignature === 'string'
+              ? functionCall.thoughtSignature
+              : undefined;
+
+    const nextSignature = existing ?? signatures[Math.min(signatureIndex, signatures.length - 1)];
+    if (!nextSignature) continue;
+
+    if (typeof item.thought_signature !== 'string') {
+      item.thought_signature = nextSignature;
+      changed = true;
+    }
+
+    if (functionCall && typeof functionCall.thought_signature !== 'string') {
+      functionCall.thought_signature = nextSignature;
+      changed = true;
+    }
+
+    signatureIndex += 1;
+  }
+
+  return changed;
+}
+
+function wrapGeminiToolsAsFunctionDeclarations(payload: Record<string, unknown>): boolean {
+  if (!Array.isArray(payload.tools) || payload.tools.length === 0) {
+    return false;
+  }
+
+  const tools = payload.tools as unknown[];
+  const functionDeclarations: Array<Record<string, unknown>> = [];
+  const passthrough: unknown[] = [];
+  let changed = false;
+
+  for (const tool of tools) {
+    if (!isRecord(tool)) {
+      passthrough.push(tool);
+      continue;
+    }
+
+    if (Array.isArray(tool.functionDeclarations)) {
+      passthrough.push(tool);
+      continue;
+    }
+
+    if (tool.googleSearch || tool.googleSearchRetrieval || tool.codeExecution) {
+      passthrough.push(tool);
+      continue;
+    }
+
+    const fn = isRecord(tool.function) ? tool.function : undefined;
+    const custom = isRecord(tool.custom) ? tool.custom : undefined;
+
+    const name =
+      typeof tool.name === 'string'
+        ? tool.name
+        : typeof fn?.name === 'string'
+          ? fn.name
+          : typeof custom?.name === 'string'
+            ? custom.name
+            : undefined;
+
+    if (!name) {
+      passthrough.push(tool);
+      continue;
+    }
+
+    const description =
+      typeof tool.description === 'string'
+        ? tool.description
+        : typeof fn?.description === 'string'
+          ? fn.description
+          : typeof custom?.description === 'string'
+            ? custom.description
+            : '';
+
+    const parameters =
+      (isRecord(fn?.input_schema) ? fn?.input_schema : undefined) ??
+      (isRecord(fn?.parameters) ? fn?.parameters : undefined) ??
+      (isRecord(fn?.inputSchema) ? fn?.inputSchema : undefined) ??
+      (isRecord(custom?.input_schema) ? custom?.input_schema : undefined) ??
+      (isRecord(custom?.parameters) ? custom?.parameters : undefined) ??
+      (isRecord(tool.parameters) ? tool.parameters : undefined) ??
+      (isRecord(tool.input_schema) ? tool.input_schema : undefined) ??
+      (isRecord(tool.inputSchema) ? tool.inputSchema : undefined) ??
+      { type: 'OBJECT', properties: {} };
+
+    functionDeclarations.push({
+      name,
+      description,
+      parameters,
+    });
+    changed = true;
+  }
+
+  if (!changed) {
+    return false;
+  }
+
+  const nextTools: unknown[] = [];
+  if (functionDeclarations.length > 0) {
+    nextTools.push({ functionDeclarations });
+  }
+  nextTools.push(...passthrough);
+  payload.tools = nextTools;
+  return true;
 }
 
 function normalizeReasoningPayload(payload: Record<string, unknown>): boolean {
