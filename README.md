@@ -1,209 +1,167 @@
 # OpenCode OmniRoute Auth Plugin
 
-🔌 Authentication plugin for [OpenCode](https://opencode.ai) to connect to [OmniRoute](https://omniroute.ai) API.
+OpenCode plugin for using **OmniRoute** as a first-class provider with:
 
-## Features
+- `/connect omniroute` auth flow
+- dynamic `/v1/models` discovery
+- OmniRoute-specific metadata enrichment
+- safer combo model capability handling
+- practical **Responses API** compatibility work for real OpenCode usage
 
-- ✅ **Simple `/connect` Command** - No manual configuration needed
-- ✅ **API Key Authentication** - Simple and secure API key-based auth
-- ✅ **Dynamic Model Fetching** - Automatically fetches available models from `/v1/models` endpoint
-- ✅ **Provider Auto-Registration** - Registers an `omniroute` provider via plugin hooks
-- ✅ **Model Caching** - Intelligent caching with TTL for better performance
-- ✅ **Fallback Models** - Default models when API is unavailable
-- ✅ **Combo Model Capability Enrichment** - Automatically calculates lowest common capabilities for OmniRoute combo models
+This package is intentionally released separately because it goes beyond a minimal fork and tracks OmniRoute/OpenCode interoperability fixes faster.
+
+## Why this package exists
+
+If you only want a generic fork, the upstream/mainline style plugin may be enough.
+
+This package exists for teams actually running OmniRoute in OpenCode and needing things that work in practice, not just on paper.
+
+### What is different here
+
+- **Real `apiMode: "responses"` wiring**
+  - `chat` uses `@ai-sdk/openai-compatible`
+  - `responses` uses `@ai-sdk/openai`
+- **OmniRoute responses compatibility fixes**
+  - normalizes/removes unsupported token limit fields on `/responses`
+  - converts `reasoningEffort` aliases into `reasoning.effort`
+- **Variant support for reasoning models**
+  - keeps `low` / `medium` / `high`
+  - merges generated variants with custom ones like `xhigh`
+- **OmniRoute-aware model metadata enrichment**
+  - `models.dev` enrichment for context/output limits
+  - combo model lowest-common-capability calculation
+- **Safer OpenCode runtime behavior**
+  - provider bootstrap normalization
+  - local/runtime testing focused on actual OpenCode behavior
+
+### Why release it separately
+
+Because OmniRoute behavior and OpenCode provider behavior do not always line up cleanly.
+
+This package is for shipping OmniRoute-specific fixes without waiting for a generic upstream plugin direction, especially around:
+
+- Responses API behavior
+- reasoning variants
+- custom/proxy provider quirks
+- combo model metadata correctness
+
+## Highlights
+
+- ✅ `/connect omniroute` support
+- ✅ API key authentication
+- ✅ dynamic model fetching from `/v1/models`
+- ✅ model caching with TTL
+- ✅ fallback models when API/model listing fails
+- ✅ combo model capability enrichment from `/api/combos`
+- ✅ `chat` and `responses` runtime modes
+- ✅ reasoning variant support for OmniRoute reasoning models
+- ✅ request normalization for OmniRoute Responses API quirks
 
 ## Installation
 
-## Quick Start
+```bash
+npm install -g @riskihajar/opencode-omniroute-auth
+```
 
-### 1. Add plugin to opencode config
+Then add it to your OpenCode config:
+
 ```json
 {
   "plugin": [
-    "opencode-omniroute-auth"
+    "@riskihajar/opencode-omniroute-auth"
   ]
 }
 ```
 
-### 2. Connect to OmniRoute
-
-Simply run the `/connect` command in OpenCode:
-
-```
-/connect omniroute
-```
-
-The plugin will prompt you for your **API key**.
-
-### 3. Done! 🎉
-
-The plugin automatically:
-- Fetches available models from `/v1/models`
-- Configures OpenCode to use OmniRoute
-- Stores your credentials securely
-
-No manual configuration file editing required!
-
-## Usage
-
-Once connected, OpenCode will automatically use OmniRoute for AI requests:
-
-```bash
-# The plugin is now active and ready to use
-# All AI requests will be routed through OmniRoute
-```
-
-### Refresh Models
-
-By default, the plugin refreshes the model list whenever provider options are reloaded (`refreshOnList: true`).
-
-You can disable refreshes by setting `provider.omniroute.options.refreshOnList` to `false` and clear the cache programmatically:
-
-```typescript
-import { clearModelCache } from '@riskihajar/opencode-omniroute-auth/runtime';
-
-clearModelCache();
-```
-
-## Configuration (Optional)
-
-While the plugin works out-of-the-box with `/connect`, you can also configure it manually in your OpenCode config:
+For local development you can also point OpenCode directly to the repository path:
 
 ```json
 {
   "plugin": [
-    "opencode-omniroute-auth"
+    "/absolute/path/to/opencode-omniroute-auth"
+  ]
+}
+```
+
+## Quick start
+
+### 1. Connect
+
+Run:
+
+```bash
+/connect omniroute
+```
+
+Then paste your OmniRoute API key.
+
+### 2. Select model
+
+Use:
+
+```bash
+/models
+```
+
+### 3. Done
+
+The plugin will:
+
+- register the `omniroute` provider
+- fetch available models from OmniRoute
+- enrich model metadata when possible
+- inject auth headers for OmniRoute requests
+
+## Configuration
+
+Minimal example:
+
+```json
+{
+  "plugin": [
+    "@riskihajar/opencode-omniroute-auth"
   ],
   "provider": {
     "omniroute": {
       "options": {
         "baseURL": "http://localhost:20128/v1",
-        "apiMode": "chat",
-        "refreshOnList": true,
-        "modelCacheTtl": 300000
+        "apiMode": "chat"
       }
     }
   }
 }
 ```
 
-Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.json`.
+### Options
 
-### Configuration Options
+| Option | Type | Description |
+|---|---|---|
+| `provider.omniroute.options.baseURL` | `string` | OmniRoute base URL. Default: `http://localhost:20128/v1` |
+| `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | Runtime API mode. Default: `chat` |
+| `provider.omniroute.options.refreshOnList` | `boolean` | Refresh model list on provider load. Default: `true` |
+| `provider.omniroute.options.modelCacheTtl` | `number` | Cache TTL in ms |
+| `provider.omniroute.options.modelsDev` | `object` | Configure models.dev enrichment |
+| `provider.omniroute.options.modelMetadata` | `object \| array` | Override/add model metadata |
 
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `plugin` | string[] | No | npm plugin packages to load (use `@riskihajar/opencode-omniroute-auth` when installed from npm) |
-| `provider.omniroute.options.baseURL` | string | No | OmniRoute API base URL (default: `http://localhost:20128/v1`) |
-| `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | No | Provider API mode (default: `chat`). `responses` switches provider runtime to `@ai-sdk/open-responses`. |
-| `provider.omniroute.options.modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
-| `provider.omniroute.options.refreshOnList` | boolean | No | Whether to refresh models when provider options load (default: true) |
-| `provider.omniroute.options.modelsDev` | object | No | Enrich model metadata from models.dev on refresh (default: enabled) |
-| `provider.omniroute.options.modelMetadata` | object \| array | No | Override/add metadata for custom/virtual models (works well in `opencode.js`) |
+## API modes
 
-### Model Metadata Enrichment (models.dev)
+### `chat`
 
-OmniRoute may not expose model context/output limits in `/v1/models`. When enabled, this plugin attempts to
-enrich `contextWindow` and `maxTokens` by matching your OmniRoute models against `models.dev`.
+Uses:
 
-You can disable enrichment or override defaults:
+- `@ai-sdk/openai-compatible`
 
-```js
-{
-  provider: {
-    omniroute: {
-      options: {
-        modelsDev: {
-          enabled: true,
-          url: 'https://models.dev/api.json',
-          timeoutMs: 1000,
-          cacheTtl: 86400000,
-          providerAliases: {
-            cx: 'openai',
-          },
-        },
-      },
-    },
-  },
-}
-```
+Best when your OmniRoute/OpenCode flow is primarily Chat Completions compatible.
 
-### Custom / Virtual Model Overrides (config blocks)
+### `responses`
 
-For custom/virtual models (or when matching is imperfect), you can provide metadata overrides.
+Uses:
 
-In `opencode.js` you can use RegExp matchers:
+- `@ai-sdk/openai`
 
-```js
-{
-  provider: {
-    omniroute: {
-      options: {
-        modelMetadata: [
-          { match: /gpt-5\.3-codex$/i, contextWindow: 200000, maxTokens: 8192 },
-          { match: 'omniroute/virtual/my-custom-model', addIfMissing: true, contextWindow: 50000 },
-        ],
-      },
-    },
-  },
-}
-```
+This is important.
 
-In JSON configs, use an object keyed by model id:
-
-```json
-{
-  "provider": {
-    "omniroute": {
-      "options": {
-        "modelMetadata": {
-          "virtual/my-custom-model": { "contextWindow": 50000, "maxTokens": 2048 }
-        }
-      }
-    }
-  }
-}
-```
-
-### Combo Model Capability Enrichment
-
-OmniRoute supports "combo models" - virtual models that route to multiple underlying models with fallback strategies. This plugin automatically detects combo models and calculates their capabilities using a **lowest common denominator** approach:
-
-- **Context Window**: Minimum of all underlying models
-- **Max Tokens**: Minimum of all underlying models  
-- **Vision Support**: Only if ALL underlying models support vision
-- **Tool Support**: Only if ALL underlying models support tools
-
-This ensures safe operation by never exceeding the capabilities of any single model in the combo.
-
-**How it works:**
-1. The plugin fetches combo definitions from OmniRoute's `/api/combos` endpoint
-2. For each combo model, it resolves the underlying models
-3. It looks up each underlying model's capabilities from `models.dev`
-4. It calculates the lowest common capabilities across all resolvable models
-5. These calculated capabilities are applied to the combo model
-
-**Example:**
-The "Designer" combo might route to:
-- `kmc/kimi-k2.5` (context: 256000, tools: yes)
-- `cx/gpt-5.1-codex-mini` (context: 204800, tools: yes)
-- `gemini/models/gemini-3-flash-preview` (context: 1048576, tools: yes)
-
-Calculated capabilities:
-- Context: **204800** (minimum)
-- Max Tokens: **32768** (minimum)
-- Tools: **true** (all support tools)
-
-Note: Some underlying models may not be found in `models.dev` (e.g., custom models). In such cases, they are excluded from capability calculation, and a warning is logged.
-
-### API Mode
-
-### API Mode
-
-The plugin supports two provider API modes:
-
-- `chat` (default) - uses `@ai-sdk/openai-compatible` against the OmniRoute base URL.
-- `responses` - uses `@ai-sdk/open-responses` against the OmniRoute `/v1/responses` endpoint.
+`responses` mode here is not just config decoration. It changes the runtime provider implementation so OpenCode can use native Responses API behavior.
 
 Example:
 
@@ -219,176 +177,145 @@ Example:
 }
 ```
 
-If an unsupported value is provided, the plugin falls back to `chat`.
+## Reasoning variants
 
-Internally, the plugin now switches both:
+For reasoning-capable models, this plugin can expose variants like:
 
-- provider npm package
-- provider/model API URL
+- `low`
+- `medium`
+- `high`
 
-so `apiMode: "responses"` is not just metadata; it changes the runtime provider implementation.
+and merge them with explicit model variants like:
 
-## Dynamic Model Fetching
+- `xhigh`
 
-This plugin automatically fetches available models from OmniRoute's `/v1/models` endpoint. This ensures you always have access to the latest models without manual configuration.
+This matters for OmniRoute/Codex-style models where upstream metadata is often incomplete or uneven.
 
-### How It Works
+## OmniRoute-specific behavior
 
-1. On first request, the plugin fetches models from `/v1/models`
-2. By default, models are refreshed every time you open the model list (`refreshOnList: true`)
-3. If `refreshOnList` is disabled, models are cached for 5 minutes (configurable via `modelCacheTtl`)
-4. If the API is unavailable, fallback models are used
+### 1. Dynamic model fetching
 
-## Default Models
+Models are fetched from:
 
-When the `/v1/models` endpoint is unavailable, the plugin provides these fallback models:
+- `/v1/models`
 
-- `gpt-4o` - GPT-4o model with full capabilities
-- `gpt-4o-mini` - Fast and cost-effective
-- `claude-3-5-sonnet` - Claude 3.5 Sonnet
-- `llama-3-1-405b` - Llama 3.1 405B
+### 2. Combo model enrichment
 
-## API
+Combo models are resolved using OmniRoute combo metadata from:
 
-### Types
+- `/api/combos`
 
-```typescript
-import type {
-  OmniRouteApiMode,
-  OmniRouteConfig,
-  OmniRouteModel,
-  OmniRouteModelMetadataConfig,
-  OmniRouteModelsDevConfig,
-} from "@riskihajar/opencode-omniroute-auth";
+Capabilities are calculated conservatively using the lowest common denominator across resolvable backing models.
 
-interface OmniRouteConfig {
-  baseUrl: string;
-  apiKey: string;
-  apiMode: OmniRouteApiMode;
-  defaultModels?: OmniRouteModel[];
-  modelCacheTtl?: number;
-  refreshOnList?: boolean;
-  modelsDev?: OmniRouteModelsDevConfig;
-  modelMetadata?: OmniRouteModelMetadataConfig;
-}
+### 3. Responses API normalization
 
-type OmniRouteApiMode = 'chat' | 'responses';
+When using `apiMode: "responses"`, the plugin normalizes request payloads for OmniRoute quirks, including:
 
-interface OmniRouteModel {
-  id: string;
-  name: string;
-  description?: string;
-  contextWindow?: number;
-  maxTokens?: number;
-  supportsStreaming?: boolean;
-  supportsVision?: boolean;
-  supportsTools?: boolean;
-  pricing?: {
-    input?: number;
-    output?: number;
-  };
+- removing unsupported token limit fields
+- converting reasoning aliases into the shape expected by Responses requests
+
+## models.dev enrichment
+
+OmniRoute model listings do not always provide enough metadata for a good OpenCode UX.
+
+This plugin can enrich models with data derived from `models.dev`, especially:
+
+- context window
+- output token limit
+- tool support
+- reasoning support
+
+Example:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "modelsDev": {
+          "enabled": true,
+          "url": "https://models.dev/api.json",
+          "timeoutMs": 1000,
+          "cacheTtl": 86400000,
+          "providerAliases": {
+            "cx": "openai"
+          }
+        }
+      }
+    }
+  }
 }
 ```
 
-### Functions
+## Custom model metadata
 
-```typescript
+You can override or add model metadata manually.
+
+JSON example:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "modelMetadata": {
+          "virtual/my-custom-model": {
+            "contextWindow": 50000,
+            "maxTokens": 2048
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+`opencode.js` example with matchers:
+
+```js
+{
+  provider: {
+    omniroute: {
+      options: {
+        modelMetadata: [
+          { match: /gpt-5\.4/i, reasoning: true },
+          { match: /gpt-5\.3-codex$/i, contextWindow: 200000, maxTokens: 8192 },
+        ],
+      },
+    },
+  },
+}
+```
+
+## Runtime helpers
+
+```ts
 import {
   fetchModels,
   clearModelCache,
   refreshModels,
-  // New: Combo model utilities
-  clearComboCache,
-  fetchComboData,
-  resolveUnderlyingModels,
-  calculateModelCapabilities,
 } from '@riskihajar/opencode-omniroute-auth/runtime';
-
-// Fetch models manually (with automatic enrichment)
-const models = await fetchModels(config, apiKey);
-
-// Clear model cache (also clears combo cache)
-clearModelCache();
-
-// Force refresh models
-const freshModels = await refreshModels(config, apiKey);
-
-// Combo model utilities
-const combos = await fetchComboData(config);
-const underlyingModels = await resolveUnderlyingModels('Designer', config);
-const capabilities = await calculateModelCapabilities(model, config, modelsDevIndex);
-```
-import {
-  fetchModels,
-  clearModelCache,
-  refreshModels,
-} from '@riskihajar/opencode-omniroute-auth/runtime';
-
-// Fetch models manually
-const models = await fetchModels(config, apiKey);
-
-// Clear model cache
-clearModelCache();
-
-// Force refresh models
-const freshModels = await refreshModels(config, apiKey);
 ```
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Build
-npm run build
-
-# Watch mode
-npm run dev
-
-# Clean
-npm run clean
+npm test
 ```
 
-## Troubleshooting
+## Release philosophy
 
-### Connection Failed
+This package is maintained as a pragmatic OmniRoute-focused distribution.
 
-If you see "Connection failed" when running `/connect omniroute`:
+That means the priority order is:
 
-1. **Check your configured base URL** - Ensure `provider.omniroute.options.baseURL` points to your OmniRoute endpoint
-2. **Verify your API key** - Ensure your API key starts with `sk-` and is valid
-3. **Check OmniRoute is running** - Ensure your OmniRoute instance is accessible
+1. make it work in real OpenCode setups
+2. preserve OmniRoute-specific UX/features
+3. keep the public package easy to consume
 
-### Models Not Loading
-
-If models aren't loading:
-
-1. Check your OmniRoute `/v1/models` endpoint is accessible
-2. Ensure `provider.omniroute.options.baseURL` points to your OmniRoute endpoint
-3. Re-run `/connect omniroute` to refresh your API key
-4. If you use the package programmatically, call `clearModelCache()` from `@riskihajar/opencode-omniroute-auth/runtime`
-5. Check the OpenCode logs for error messages
-
-### Plugin Not Loading Outside This Repo
-
-If the plugin loads only through a local shim (for example from `.opencode/plugins` or `.opencode/plugi`) but not from npm in `opencode.json`:
-
-1. Ensure you are using `@riskihajar/opencode-omniroute-auth@1.2.0` or newer
-2. Confirm your config includes `"plugin": ["@riskihajar/opencode-omniroute-auth"]`
-3. Restart OpenCode so npm plugins are reloaded
-4. Check plugin install cache/logs under `~/.cache/opencode/node_modules`
-
-If needed, clear and reinstall plugin dependencies, then restart OpenCode.
+If upstream/fork-main behavior is too generic to solve OmniRoute edge cases quickly, this package will continue shipping targeted fixes independently.
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Support
-
-For support, please open an issue on GitHub or contact OmniRoute support.
