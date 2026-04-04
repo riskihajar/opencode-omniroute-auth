@@ -223,6 +223,10 @@ function supportsResponsesApiStreaming(modelId: string): boolean {
   const baseModelId = stripModelRuntimeSuffixes(id);
 
   if (
+    baseModelId.includes('mlx/') ||
+    baseModelId.includes('/mlx-') ||
+    baseModelId.includes('mlx-community/') ||
+    baseModelId.includes('qwen') ||
     baseModelId.includes('claude') ||
     baseModelId.includes('anthropic') ||
     baseModelId.includes('opus') ||

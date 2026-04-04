@@ -250,6 +250,41 @@ test('responses mode falls back antigravity gemini models to chat provider runti
   assert.equal(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm, '@ai-sdk/openai-compatible');
 });
 
+test('responses mode falls back mlx qwen models to chat provider runtime', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'mlx/mlx-community/Qwen3.5-4B-MLX-8bit': {
+            name: 'Qwen3.5 4B MLX 8bit',
+            capabilities: {
+              reasoning: false,
+              toolcall: true,
+              attachment: false,
+            },
+            limit: {
+              context: 32768,
+              output: 4096,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(
+    config.provider.omniroute.models['mlx/mlx-community/Qwen3.5-4B-MLX-8bit'].api.npm,
+    '@ai-sdk/openai-compatible',
+  );
+});
+
 test('per-model apiMode override forces chat runtime even when global mode is responses', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const config = {
