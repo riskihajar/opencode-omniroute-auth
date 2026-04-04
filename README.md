@@ -233,7 +233,10 @@ Current built-in fallback behavior in global `responses` mode:
 
 - Anthropic-family routed models such as Claude / Opus / Sonnet / Haiku fall back to `chat`
 - Gemini-family routed models fall back to `chat`
+- MLX/Qwen-style routed models such as `mlx/mlx-community/Qwen3.5-4B-MLX-8bit` fall back to `chat` when OmniRoute streams Chat Completions chunks on the Responses path
 - suffixes like `-thinking`, `-reasoning`, `-high`, `-medium`, `-low`, `-minimal`, `-max`, `-xhigh`, and `-none` are normalized before that decision
+
+This matters because some routed models may advertise support for both Chat Completions and Responses, but still emit `chat.completion.chunk` events when called through `/v1/responses`. In that case, the plugin prefers the safer `chat` runtime unless you explicitly override the model back to `responses`.
 
 ## Reasoning variants
 

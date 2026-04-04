@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [1.2.3] - 2026-04-03
 
+## [1.2.5] - 2026-04-04
+
+### Changed
+
+- Updated README fallback guidance to document MLX/Qwen routed models that may emit Chat Completions chunks on the Responses path.
+
+### Fixed
+
+- Fixed MLX/Qwen routed models such as `mlx/mlx-community/Qwen3.5-4B-MLX-8bit` being exposed to the Responses runtime even when OmniRoute streamed `chat.completion.chunk` payloads.
+
+### Verification
+
+- Verified `npm test` passes with regression coverage for MLX/Qwen Responses fallback behavior.
+
 ### Added
 
 - Added per-model `apiMode` overrides through `modelMetadata` and seeded `provider.omniroute.models` entries.
