@@ -327,6 +327,10 @@ function deriveModelsDevFamilies(
   const stripped = stripVariantSuffixes(modelKey);
   const strippedLower = stripped.toLowerCase();
   const matches: Array<{ providerAlias: string; modelKey: string }> = [];
+  const slashFamily = extractSlashModelFamily(modelKey);
+  const strippedSlashFamily = slashFamily ? stripVariantSuffixes(slashFamily) : null;
+  const slashFamilyLower = slashFamily?.toLowerCase();
+  const strippedSlashFamilyLower = strippedSlashFamily?.toLowerCase();
 
   const add = (providerAlias: string, candidateModelKey: string): void => {
     matches.push({ providerAlias, modelKey: candidateModelKey });
@@ -343,11 +347,27 @@ function deriveModelsDevFamilies(
   if (providerAlias) {
     add(providerAlias, modelKey);
     if (strippedLower !== lower) add(providerAlias, stripped);
+    if (slashFamily && slashFamilyLower !== lower) add(providerAlias, slashFamily);
+    if (
+      strippedSlashFamily &&
+      strippedSlashFamilyLower !== slashFamilyLower &&
+      strippedSlashFamilyLower !== lower
+    ) {
+      add(providerAlias, strippedSlashFamily);
+    }
   }
 
   if (ownedBy) {
     add(ownedBy.toLowerCase(), modelKey);
     if (strippedLower !== lower) add(ownedBy.toLowerCase(), stripped);
+    if (slashFamily && slashFamilyLower !== lower) add(ownedBy.toLowerCase(), slashFamily);
+    if (
+      strippedSlashFamily &&
+      strippedSlashFamilyLower !== slashFamilyLower &&
+      strippedSlashFamilyLower !== lower
+    ) {
+      add(ownedBy.toLowerCase(), strippedSlashFamily);
+    }
   }
 
   if (lower.startsWith('claude-')) {
@@ -371,9 +391,27 @@ function deriveModelsDevFamilies(
   ) {
     add('openai', modelKey);
     if (strippedLower !== lower) add('openai', stripped);
+    if (slashFamily && slashFamilyLower !== lower) add('openai', slashFamily);
+    if (
+      strippedSlashFamily &&
+      strippedSlashFamilyLower !== slashFamilyLower &&
+      strippedSlashFamilyLower !== lower
+    ) {
+      add('openai', strippedSlashFamily);
+    }
   }
 
   return matches;
+}
+
+function extractSlashModelFamily(modelKey: string): string | null {
+  const trimmed = modelKey.trim();
+  if (!trimmed.includes('/')) return null;
+
+  const segments = trimmed.split('/').filter((segment) => segment.trim() !== '');
+  if (segments.length < 2) return null;
+
+  return segments[segments.length - 1] ?? null;
 }
 
 function stripVariantSuffixes(modelKey: string): string {

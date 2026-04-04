@@ -127,6 +127,10 @@ export interface OmniRouteProviderModel {
     url: string;
     npm: string;
   };
+  modalities?: {
+    input: string[];
+    output: string[];
+  };
   capabilities: {
     temperature: boolean;
     reasoning: boolean;

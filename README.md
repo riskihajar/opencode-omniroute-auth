@@ -58,6 +58,7 @@ This package is for shipping OmniRoute-specific fixes without waiting for a gene
 - ✅ reasoning variant support for OmniRoute reasoning models
 - ✅ request normalization for OmniRoute Responses API quirks
 - ✅ routed model enrichment for Anthropic/Gemini families behind providers like `antigravity`
+- ✅ image capability hydration for GPT-5/Codex-style routed models
 
 ## Installation
 
@@ -113,6 +114,101 @@ The plugin will:
 - fetch available models from OmniRoute
 - enrich model metadata when possible
 - inject auth headers for OmniRoute requests
+
+## Vision / image input
+
+### Pain point this plugin fixes
+
+OmniRoute model listings from `/v1/models` often do not include enough capability metadata for OpenCode to know whether a model supports image input.
+
+In practice that can cause a bad failure mode for image prompts:
+
+- OpenCode renders the dropped image as `[Image 1]`
+- the provider registry thinks the selected model is text-only
+- the image attachment is rejected before the request is sent
+- OpenCode injects an error message into the user payload instead of sending `input_image`
+
+That degraded payload looks like this:
+
+```json
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "input_text",
+      "text": "[Image 1] ini gambar apa?"
+    },
+    {
+      "type": "input_text",
+      "text": "ERROR: Cannot read \"MAP-Midtrans-04-04-2026_10_14_PM.png\" (this model does not support image input). Inform the user."
+    }
+  ]
+}
+```
+
+This plugin now fixes that for supported GPT-5/Codex-style OmniRoute models by keeping image capability hydration stable across provider bootstrap and runtime refresh.
+
+### How image capability is detected
+
+The plugin decides image support in this order:
+
+1. explicit `provider.omniroute.options.modelMetadata`
+2. OmniRoute/runtime metadata when available
+3. `models.dev` enrichment when available
+4. conservative GPT-5/Codex-family fallback heuristics for known routed model families
+
+If a model is considered vision-capable, the provider model now exposes both:
+
+- `capabilities.attachment = true`
+- `modalities.input = ['text', 'image']`
+
+That combination is important because OpenCode uses provider capability metadata before deciding whether to serialize a dropped/pasted image as `input_image`.
+
+### How to confirm it works
+
+When image handling works, your request payload should contain a real image part, not just an injected error string:
+
+```json
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "input_text",
+      "text": "[Image 1] gambar apa yok?"
+    },
+    {
+      "type": "input_image",
+      "image_url": "data:image/png;base64,..."
+    }
+  ]
+}
+```
+
+### If a model truly does not support image input
+
+The plugin prefers explicit metadata over heuristics.
+
+- If OmniRoute or your manual `modelMetadata` says a model does not support image input, that model should remain text-only.
+- If metadata is missing, the plugin only enables image support for known GPT-5/Codex-style families where real-world OpenCode usage would otherwise degrade badly.
+- Everything else stays on the safe default unless explicit metadata or enrichment says otherwise.
+
+If you know a routed model should stay text-only, pin it explicitly:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "modelMetadata": {
+          "some-provider/some-text-only-model": {
+            "supportsVision": false
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ## Configuration
 
@@ -285,6 +381,7 @@ This plugin can enrich models with data derived from `models.dev`, especially:
 - output token limit
 - tool support
 - reasoning support
+- image support when `modalities.input` includes `image`
 
 It also tries harder to resolve routed OmniRoute models by:
 
@@ -365,6 +462,42 @@ import {
   refreshModels,
 } from '@riskihajar/opencode-omniroute-auth/runtime';
 ```
+
+## Debugging and self-test
+
+### Check discovered models
+
+To inspect the OmniRoute provider model registry with debug logs enabled:
+
+```bash
+source ~/.zshrc && OMNIROUTE_PLUGIN_DEBUG=1 opencode models omniroute --print-logs --log-level DEBUG
+```
+
+Useful things to verify in the output:
+
+- `Hydrated model codex/gpt-5.4: attachment=true input.image=true toolcall=true`
+- no later hydration pass flipping the same model back to `attachment=false`
+
+### Spawn OpenCode for a quick self-test
+
+To reproduce image handling from the CLI:
+
+```bash
+source ~/.zshrc && OMNIROUTE_PLUGIN_DEBUG=1 opencode run --model omniroute/codex/gpt-5.4 "[Image 1] ini gambar apa?" --print-logs --log-level DEBUG
+```
+
+What to look for:
+
+- if OpenCode still blocks image input before request serialization, your payload will degrade into injected `input_text` error content
+- if image serialization works, the user payload should contain `type: "input_image"`
+
+### Common verification flow
+
+1. restart OpenCode completely after plugin changes
+2. run `opencode models omniroute --print-logs --log-level DEBUG`
+3. confirm the target model is hydrated with `attachment=true`
+4. drop or paste an image into a fresh session
+5. inspect the payload and confirm `input_image` is present
 
 ## Development
 

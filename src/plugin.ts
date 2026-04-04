@@ -133,10 +133,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   const modelCacheTtl = getPositiveNumber(provider.options, 'modelCacheTtl');
   const refreshOnList = getBoolean(provider.options, 'refreshOnList');
   const modelsDev = getModelsDevConfig(provider.options);
-  const modelMetadata = mergeModelMetadataConfigs(
-    getModelMetadataConfig(provider.options),
-    getProviderModelMetadataConfig(provider.models),
-  );
+  const modelMetadata = getModelMetadataConfig(provider.options);
 
   return {
     baseUrl,
@@ -376,9 +373,9 @@ function getProviderModelMetadataConfig(
     }
 
     if (isRecord(raw.capabilities)) {
-    if (typeof raw.capabilities.reasoning === 'boolean') {
-      next.reasoning = raw.capabilities.reasoning;
-    }
+      if (typeof raw.capabilities.reasoning === 'boolean') {
+        next.reasoning = raw.capabilities.reasoning;
+      }
       if (typeof raw.capabilities.toolcall === 'boolean') {
         next.supportsTools = raw.capabilities.toolcall;
       }
@@ -538,6 +535,13 @@ function toProviderModels(
     model.id,
     toProviderModel(model, baseUrl, config),
   ]);
+  if (DEBUG) {
+    for (const [, providerModel] of entries) {
+      debugLog(
+        `[OmniRoute] Hydrated model ${providerModel.id}: attachment=${providerModel.capabilities.attachment} input.image=${providerModel.capabilities.input.image} toolcall=${providerModel.capabilities.toolcall}`,
+      );
+    }
+  }
   return Object.fromEntries(entries);
 }
 
@@ -547,8 +551,17 @@ function toProviderModel(
   config?: OmniRouteConfig,
 ): OmniRouteProviderModel {
   const apiMode = getEffectiveApiModeForModel(model, config?.apiMode ?? 'chat');
-  const supportsVision = model.supportsVision === true;
-  const supportsTools = model.supportsTools !== false;
+  const configured = getConfiguredModelMetadata(model.id, config);
+  const supportsVisionOverride = getCapabilityOverride(model.id, configured, 'supportsVision');
+  const supportsVision = typeof supportsVisionOverride === 'boolean'
+    ? supportsVisionOverride
+    : typeof model.supportsVision === 'boolean'
+      ? model.supportsVision
+      : supportsLikelyVisionInput(model.id);
+  const supportsToolsOverride = getCapabilityOverride(model.id, configured, 'supportsTools');
+  const supportsTools = typeof supportsToolsOverride === 'boolean'
+    ? supportsToolsOverride
+    : model.supportsTools !== false;
   const embeddedVariant = getEmbeddedReasoningVariant(model.id);
   const reasoning = embeddedVariant ? false : getReasoningSupport(model, config);
   const variants = getVariants(model, reasoning, apiMode);
@@ -564,6 +577,10 @@ function toProviderModel(
       id: model.id,
       url: getProviderUrl(baseUrl, apiMode),
       npm: getProviderNpm(apiMode),
+    },
+    modalities: {
+      input: supportsVision ? ['text', 'image'] : ['text'],
+      output: ['text'],
     },
     capabilities: {
       temperature: true,
@@ -623,6 +640,12 @@ function getReasoningSupport(model: OmniRouteModel, config?: OmniRouteConfig): b
 
 function supportsWidelySupportedReasoningEfforts(modelId: string): boolean {
   return /(^|[-_/])(gpt-5\.4|gpt-5\.3-codex|gpt-5\.2-codex)(?:$|[-_/])/.test(
+    modelId.toLowerCase(),
+  );
+}
+
+function supportsLikelyVisionInput(modelId: string): boolean {
+  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$|(^|[-_/])o[34](?:$|[-_/])/.test(
     modelId.toLowerCase(),
   );
 }
@@ -688,11 +711,55 @@ function getConfiguredModelMetadata(
   config?: OmniRouteConfig,
 ): OmniRouteModelMetadata | undefined {
   const metadataConfig = config?.modelMetadata;
-  if (!metadataConfig || Array.isArray(metadataConfig)) {
+  if (!metadataConfig) {
     return undefined;
   }
-  const metadata = metadataConfig[modelId];
+
+  const metadata = Array.isArray(metadataConfig)
+    ? getConfiguredModelMetadataFromBlocks(modelId, metadataConfig)
+    : metadataConfig[modelId];
+
   return metadata && typeof metadata === 'object' ? metadata : undefined;
+}
+
+function getConfiguredModelMetadataFromBlocks(
+  modelId: string,
+  blocks: OmniRouteModelMetadataBlock[],
+): OmniRouteModelMetadata | undefined {
+  let merged: OmniRouteModelMetadata | undefined;
+
+  for (const block of blocks) {
+    const matcher = typeof block.match === 'string' ? block.match : coerceRegExp(block.match);
+    const matches = typeof matcher === 'string' ? matcher === modelId : matcher?.test(modelId) === true;
+    if (!matches) continue;
+
+    const metadata = omitMatcherFields(block);
+    merged = merged ? { ...merged, ...metadata } : metadata;
+  }
+
+  return merged;
+}
+
+function omitMatcherFields(
+  block: OmniRouteModelMetadataBlock,
+): OmniRouteModelMetadata {
+  const { match: _match, addIfMissing: _addIfMissing, ...metadata } = block;
+  return metadata;
+}
+
+function getCapabilityOverride(
+  modelId: string,
+  metadata: OmniRouteModelMetadata | undefined,
+  key: 'supportsVision' | 'supportsTools' | 'reasoning',
+): boolean | undefined {
+  const value = metadata?.[key];
+  if (typeof value !== 'boolean') return undefined;
+
+  if (key === 'supportsVision' && value === false && supportsLikelyVisionInput(modelId)) {
+    return undefined;
+  }
+
+  return value;
 }
 
 function getModelFamily(modelId: string): string {
@@ -821,10 +888,20 @@ async function transformRequestBody(
   }
 
   let changed = false;
+  const beforeImages = countImageParts(payload);
   changed = normalizeReasoningPayload(payload) || changed;
   changed = normalizeResponsesPayload(payload, url) || changed;
   changed = slimCodexPayload(payload) || changed;
   changed = sanitizeGeminiToolSchemas(payload) || changed;
+
+  if (DEBUG) {
+    const afterImages = countImageParts(payload);
+    if (beforeImages > 0 || afterImages > 0) {
+      debugLog(
+        `[OmniRoute] Payload image parts before=${beforeImages} after=${afterImages} url=${url}`,
+      );
+    }
+  }
 
   return changed ? JSON.stringify(payload) : undefined;
 }
@@ -1341,4 +1418,42 @@ function stripSchemaKeys(schema: Record<string, unknown>): boolean {
   }
 
   return changed;
+}
+
+function countImageParts(value: unknown): number {
+  let total = 0;
+
+  const visit = (current: unknown): void => {
+    if (Array.isArray(current)) {
+      for (const item of current) visit(item);
+      return;
+    }
+
+    if (!isRecord(current)) {
+      return;
+    }
+
+    const type = typeof current.type === 'string' ? current.type : undefined;
+    const hasImageUrl = current.image_url !== undefined || current.imageUrl !== undefined;
+    const hasFileRef = current.file_id !== undefined || current.fileId !== undefined;
+    const hasInlineImage = current.image !== undefined;
+
+    if (
+      type === 'input_image' ||
+      type === 'image' ||
+      type === 'image_url' ||
+      hasImageUrl ||
+      hasFileRef ||
+      hasInlineImage
+    ) {
+      total += 1;
+    }
+
+    for (const child of Object.values(current)) {
+      visit(child);
+    }
+  };
+
+  visit(value);
+  return total;
 }
