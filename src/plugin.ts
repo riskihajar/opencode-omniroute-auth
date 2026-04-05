@@ -219,6 +219,10 @@ function supportsResponsesApiStreaming(modelId: string): boolean {
   const id = modelId.toLowerCase();
   const baseModelId = stripModelRuntimeSuffixes(id);
 
+  if (baseModelId === 'cu/default' || baseModelId === 'cursor/default') {
+    return false;
+  }
+
   if (
     baseModelId.includes('mlx/') ||
     baseModelId.includes('/mlx-') ||

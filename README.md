@@ -327,12 +327,18 @@ By default, the plugin still applies a conservative fallback for known models th
 
 Current built-in fallback behavior in global `responses` mode:
 
+- Cursor default aliases `cu/default` and `cursor/default` fall back to `chat`
 - Anthropic-family routed models such as Claude / Opus / Sonnet / Haiku fall back to `chat`
 - Gemini-family routed models fall back to `chat`
 - MLX/Qwen-style routed models such as `mlx/mlx-community/Qwen3.5-4B-MLX-8bit` fall back to `chat` when OmniRoute streams Chat Completions chunks on the Responses path
 - suffixes like `-thinking`, `-reasoning`, `-high`, `-medium`, `-low`, `-minimal`, `-max`, `-xhigh`, and `-none` are normalized before that decision
 
 This matters because some routed models may advertise support for both Chat Completions and Responses, but still emit `chat.completion.chunk` events when called through `/v1/responses`. In that case, the plugin prefers the safer `chat` runtime unless you explicitly override the model back to `responses`.
+
+For Cursor specifically:
+
+- `cu/default` and `cursor/default` are forced to `chat` because OmniRoute currently returns Chat Completions streaming there even when OpenCode is globally configured for `responses`
+- Cursor-routed Claude models continue to follow the existing Claude-family fallback behavior instead of getting a broader Cursor-wide special case
 
 ## Reasoning variants
 
@@ -477,6 +483,7 @@ Useful things to verify in the output:
 
 - `Hydrated model codex/gpt-5.4: attachment=true input.image=true toolcall=true`
 - no later hydration pass flipping the same model back to `attachment=false`
+- `omniroute/cu/default` and `omniroute/cursor/default` should resolve without Responses parser errors
 
 ### Spawn OpenCode for a quick self-test
 
