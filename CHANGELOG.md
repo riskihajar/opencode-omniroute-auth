@@ -2,6 +2,44 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.7] - 2026-04-05
+
+### Changed
+
+- Updated README troubleshooting and API mode guidance to document Cursor default alias fallback behavior.
+
+### Fixed
+
+- Fixed `cu/default` and `cursor/default` being sent through the Responses runtime even when OmniRoute streamed Chat Completions chunks for those aliases.
+- Narrowed the Cursor-specific runtime fallback so it only targets the broken default aliases instead of broadly special-casing all `cu/*` and `cursor/*` models.
+
+### Verification
+
+- Verified `omniroute/cu/default` routes through `/v1/chat/completions` without Responses parser failures.
+- Verified Cursor-routed Anthropic models such as `omniroute/cu/claude-4.5-sonnet` still complete successfully in OpenCode local testing.
+
+## [1.2.6] - 2026-04-05
+
+### Added
+
+- Added provider `modalities` metadata so vision-capable OmniRoute models expose explicit `text` + `image` input support to OpenCode.
+- Added debug tracing for hydrated model image capability and payload image-part preservation during request transformation.
+
+### Changed
+
+- Updated README with a dedicated vision/image-input troubleshooting section, payload examples, and self-test commands.
+- Expanded `models.dev` family matching for routed model IDs like `codex/gpt-5.4` by checking slash-family aliases during enrichment.
+
+### Fixed
+
+- Fixed GPT-5/Codex-style routed models losing image capability during runtime hydration because seeded provider metadata was overriding fresher runtime capability data.
+- Fixed OpenCode image prompts degrading into injected text errors instead of serializing `input_image` for supported OmniRoute Codex models.
+
+### Verification
+
+- Verified `omniroute/codex/gpt-5.4` remains hydrated with `attachment=true` and `input.image=true` across provider bootstrap and runtime refresh.
+- Verified dropped/pasted images serialize as `input_image` and are successfully processed by OmniRoute-routed Codex models in local OpenCode testing.
+
 ## [1.2.3] - 2026-04-03
 
 ## [1.2.5] - 2026-04-04
