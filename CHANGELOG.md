@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.8] - 2026-04-09
+
+### Added
+
+- Added `resetEmbeddedReasoningVariant` metadata support so routed model IDs like `antigravity/gemini-3.1-pro-high` can opt back into normal OpenCode reasoning variants.
+- Added regression coverage for embedded reasoning suffix resets, default fixed-suffix behavior, and Responses-vs-Chat temperature handling.
+
+### Changed
+
+- Updated README with configuration guidance for `resetEmbeddedReasoningVariant` when using `modelMetadata` or seeded provider models.
+
+### Fixed
+
+- Fixed provider model metadata merging so explicit `modelMetadata` overrides are preserved instead of being overwritten by seeded model-derived metadata.
+- Fixed Responses payload normalization to strip `temperature`, matching OmniRoute's current Responses behavior while leaving Chat Completions payloads unchanged.
+- Fixed `models.dev` enrichment for Gemini routed IDs with embedded reasoning/version suffixes so upstream Google model limits still hydrate correctly.
+
+### Verification
+
+- Verified `codex/gpt-5.4` accepts `temperature` on `/v1/chat/completions` but rejects it on `/v1/responses`, and covered the plugin workaround with tests.
+- Verified `npm test` passes with regression coverage for embedded reasoning reset and Responses payload sanitization.
+
 ## [1.2.7] - 2026-04-05
 
 ### Changed
