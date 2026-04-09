@@ -798,6 +798,69 @@ test('responses payload strips unsupported token limit fields', async () => {
   assert.equal(forwardedBody.max_tokens, undefined);
 });
 
+test('responses payload strips temperature but chat completions keep it', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const forwardedBodies = [];
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBodies.push({ url, body: JSON.parse(raw) });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'codex/gpt-5.4',
+      input: 'test',
+      temperature: 0.5,
+    }),
+  });
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'codex/gpt-5.4',
+      messages: [{ role: 'user', content: 'test' }],
+      temperature: 0.5,
+    }),
+  });
+
+  const responsesCall = forwardedBodies.find((entry) => entry.url.endsWith('/v1/responses'));
+  const chatCall = forwardedBodies.find((entry) => entry.url.endsWith('/v1/chat/completions'));
+
+  assert.ok(responsesCall);
+  assert.ok(chatCall);
+  assert.equal(responsesCall.body.temperature, undefined);
+  assert.equal(chatCall.body.temperature, 0.5);
+});
+
 test('responses payload strips chat-only reasoning aliases but keeps reasoning object', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;
