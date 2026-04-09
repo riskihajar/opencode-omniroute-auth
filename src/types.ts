@@ -16,6 +16,8 @@ export interface OmniRouteModel {
   apiMode?: OmniRouteApiMode;
   /** Whether the model supports reasoning effort controls */
   reasoning?: boolean;
+  /** Disable a seeded/runtime reasoning effort variant derived from the model id */
+  resetEmbeddedReasoningVariant?: boolean;
   /** Optional OpenCode variant definitions for this model */
   variants?: Record<string, unknown>;
   pricing?: {
@@ -36,6 +38,8 @@ export interface OmniRouteModelMetadata {
   apiMode?: OmniRouteApiMode;
   /** Mark model as supporting reasoning effort controls */
   reasoning?: boolean;
+  /** Disable a seeded/runtime reasoning effort variant derived from the model id */
+  resetEmbeddedReasoningVariant?: boolean;
   /** Optional explicit variant map exposed to OpenCode */
   variants?: Record<string, unknown>;
   pricing?: {

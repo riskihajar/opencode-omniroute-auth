@@ -419,6 +419,7 @@ function stripVariantSuffixes(modelKey: string): string {
 
   while (true) {
     const next = normalized
+      .replace(/-(?:\d+(?:\.\d+)*)-(minimal|low|medium|high|max|xhigh|none)$/i, '')
       .replace(/-(thinking|reasoning)$/i, '')
       .replace(/-(minimal|low|medium|high|max|xhigh|none)$/i, '');
 
@@ -496,6 +497,9 @@ function mergeModelMetadata(model: OmniRouteModel, metadata: OmniRouteModelMetad
     ...(metadata.supportsTools !== undefined ? { supportsTools: metadata.supportsTools } : {}),
     ...(metadata.apiMode !== undefined ? { apiMode: metadata.apiMode } : {}),
     ...(metadata.reasoning !== undefined ? { reasoning: metadata.reasoning } : {}),
+    ...(metadata.resetEmbeddedReasoningVariant !== undefined
+      ? { resetEmbeddedReasoningVariant: metadata.resetEmbeddedReasoningVariant }
+      : {}),
     ...(metadata.variants !== undefined ? { variants: metadata.variants } : {}),
     ...(metadata.pricing !== undefined ? { pricing: metadata.pricing } : {}),
   };

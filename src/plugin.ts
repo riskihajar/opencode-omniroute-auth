@@ -392,6 +392,10 @@ function getProviderModelMetadataConfig(
       next.variants = raw.variants;
     }
 
+    if (raw.resetEmbeddedReasoningVariant === true) {
+      next.resetEmbeddedReasoningVariant = true;
+    }
+
     if (raw.api === 'chat' || raw.api === 'responses') {
       next.apiMode = raw.api;
     }
@@ -420,7 +424,13 @@ function mergeModelMetadataConfigs(
   }
 
   if (!Array.isArray(base) && !Array.isArray(extra)) {
-    return { ...base, ...extra };
+    const merged: Record<string, OmniRouteModelMetadata> = { ...base };
+    for (const [modelId, metadata] of Object.entries(extra)) {
+      merged[modelId] = merged[modelId]
+        ? { ...merged[modelId], ...metadata }
+        : metadata;
+    }
+    return merged;
   }
 
   const toBlocks = (value: OmniRouteModelMetadataConfig): OmniRouteModelMetadataBlock[] => {
@@ -518,6 +528,10 @@ function getConfigSeedModels(models: unknown): OmniRouteModel[] {
             : undefined,
       reasoning:
         typeof capabilities?.reasoning === 'boolean' ? capabilities.reasoning : undefined,
+      resetEmbeddedReasoningVariant:
+        typeof metadata.resetEmbeddedReasoningVariant === 'boolean'
+          ? metadata.resetEmbeddedReasoningVariant
+          : undefined,
       variants:
         isRecord(metadata.variants) && Object.keys(metadata.variants).length > 0
           ? metadata.variants
@@ -556,6 +570,8 @@ function toProviderModel(
 ): OmniRouteProviderModel {
   const apiMode = getEffectiveApiModeForModel(model, config?.apiMode ?? 'chat');
   const configured = getConfiguredModelMetadata(model.id, config);
+  const effectiveModel = configured ? { ...model, ...configured } : model;
+  const embeddedVariant = getEmbeddedReasoningVariant(model.id, effectiveModel);
   const supportsVisionOverride = getCapabilityOverride(model.id, configured, 'supportsVision');
   const supportsVision = typeof supportsVisionOverride === 'boolean'
     ? supportsVisionOverride
@@ -566,9 +582,8 @@ function toProviderModel(
   const supportsTools = typeof supportsToolsOverride === 'boolean'
     ? supportsToolsOverride
     : model.supportsTools !== false;
-  const embeddedVariant = getEmbeddedReasoningVariant(model.id);
-  const reasoning = embeddedVariant ? false : getReasoningSupport(model, config);
-  const variants = getVariants(model, reasoning, apiMode);
+  const reasoning = embeddedVariant ? false : getReasoningSupport(effectiveModel, config);
+  const variants = getVariants(effectiveModel, reasoning, apiMode);
   const options = embeddedVariant ? getReasoningVariantOptions(embeddedVariant, apiMode) : {};
 
   return {
@@ -661,13 +676,14 @@ function getVariants(
 ): Record<string, unknown> {
   const supportsWidelySupportedEfforts = supportsWidelySupportedReasoningEfforts(model.id);
 
-  const generated = (!reasoning && !supportsWidelySupportedEfforts) || hasEmbeddedReasoningVariant(model.id)
+  const generated = (!reasoning && !supportsWidelySupportedEfforts)
+    || hasEmbeddedReasoningVariant(model)
     ? {}
     : {
-    low: getReasoningVariantOptions('low', apiMode),
-    medium: getReasoningVariantOptions('medium', apiMode),
-    high: getReasoningVariantOptions('high', apiMode),
-  };
+        low: getReasoningVariantOptions('low', apiMode),
+        medium: getReasoningVariantOptions('medium', apiMode),
+        high: getReasoningVariantOptions('high', apiMode),
+      };
 
   if (model.variants && Object.keys(model.variants).length > 0) {
     return {
@@ -686,13 +702,18 @@ function getReasoningVariantOptions(
   return { reasoningEffort: effort };
 }
 
-function hasEmbeddedReasoningVariant(modelId: string): boolean {
-  return getEmbeddedReasoningVariant(modelId) !== undefined;
+function hasEmbeddedReasoningVariant(model: OmniRouteModel): boolean {
+  return getEmbeddedReasoningVariant(model.id, model) !== undefined;
 }
 
 function getEmbeddedReasoningVariant(
   modelId: string,
+  metadata?: Pick<OmniRouteModelMetadata, 'resetEmbeddedReasoningVariant'>,
 ): 'low' | 'medium' | 'high' | 'minimal' | 'none' | 'max' | 'xhigh' | undefined {
+  if (metadata?.resetEmbeddedReasoningVariant === true) {
+    return undefined;
+  }
+
   const id = modelId.toLowerCase();
   const match = id.match(/(?:^|[-_/])(low|medium|high|minimal|none|max|xhigh)(?:$|[-_/])/);
   const effort = match?.[1];

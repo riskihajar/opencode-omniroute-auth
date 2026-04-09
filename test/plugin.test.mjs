@@ -2,11 +2,35 @@ import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import OmniRouteAuthPlugin from '../dist/index.js';
-import { fetchModels } from '../dist/runtime.js';
+import { clearModelCache, clearModelsDevCache, fetchModels } from '../dist/runtime.js';
 
 const ORIGINAL_FETCH = global.fetch;
 
+function createEmptyOmniRouteFetch() {
+  return async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({ object: 'list', data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+}
+
 afterEach(() => {
+  clearModelCache();
+  clearModelsDevCache();
   global.fetch = ORIGINAL_FETCH;
 });
 
@@ -181,6 +205,88 @@ test('responses mode exposes generated reasoning variants for reasoning-capable 
     medium: { reasoningEffort: 'medium' },
     high: { reasoningEffort: 'high' },
   });
+});
+
+test('resetEmbeddedReasoningVariant restores generated variants for embedded high suffix models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  global.fetch = createEmptyOmniRouteFetch();
+
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+          modelMetadata: {
+            'antigravity/gemini-3.1-pro-high': {
+              resetEmbeddedReasoningVariant: true,
+              reasoning: true,
+            },
+          },
+        },
+        models: {
+          'antigravity/gemini-3.1-pro-high': {
+            name: 'Gemini 3.1 Pro High',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 1048576,
+              output: 65535,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].options, {});
+  assert.deepEqual(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].variants, {
+    low: { reasoningEffort: 'low' },
+    medium: { reasoningEffort: 'medium' },
+    high: { reasoningEffort: 'high' },
+  });
+});
+
+test('embedded high suffix models keep fixed reasoning option by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  global.fetch = createEmptyOmniRouteFetch();
+
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'antigravity/gemini-3.1-pro-high': {
+            name: 'Gemini 3.1 Pro High',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 1048576,
+              output: 65535,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].options, {
+    reasoningEffort: 'high',
+  });
+  assert.deepEqual(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].variants, {});
 });
 
 test('responses mode falls back anthropic-family models to chat provider runtime', async () => {
