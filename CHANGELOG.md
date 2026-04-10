@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.9] - 2026-04-09
+
+### Changed
+
+- Documented the current OmniRoute `/v1/responses` parameter subset that this plugin preserves while still using `@ai-sdk/openai`.
+
+### Added
+
+- Added regression coverage to ensure accepted Responses fields such as `store`, `prompt_cache_key`, `parallel_tool_calls`, `truncation`, `service_tier`, `top_p`, penalties, `metadata`, and `include` are not stripped accidentally.
+
+### Verification
+
+- Verified `npm test` passes after locking in the current OmniRoute-compatible Responses parameter subset.
+
 ## [1.2.8] - 2026-04-09
 
 ### Added
