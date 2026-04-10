@@ -969,6 +969,73 @@ test('responses payload strips unsupported reasoning summary aliases', async () 
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
 });
 
+test('responses payload keeps OmniRoute-supported responses fields', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'codex/gpt-5.4',
+      input: 'test',
+      store: false,
+      prompt_cache_key: 'cache-key',
+      parallel_tool_calls: true,
+      truncation: 'auto',
+      service_tier: 'auto',
+      top_p: 1,
+      presence_penalty: 0,
+      frequency_penalty: 0,
+      metadata: { source: 'test' },
+      include: ['reasoning.encrypted_content'],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.store, false);
+  assert.equal(forwardedBody.prompt_cache_key, 'cache-key');
+  assert.equal(forwardedBody.parallel_tool_calls, true);
+  assert.equal(forwardedBody.truncation, 'auto');
+  assert.equal(forwardedBody.service_tier, 'auto');
+  assert.equal(forwardedBody.top_p, 1);
+  assert.equal(forwardedBody.presence_penalty, 0);
+  assert.equal(forwardedBody.frequency_penalty, 0);
+  assert.deepEqual(forwardedBody.metadata, { source: 'test' });
+  assert.deepEqual(forwardedBody.include, ['reasoning.encrypted_content']);
+});
+
 test('responses payload converts reasoningEffort into reasoning object before cleanup', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;

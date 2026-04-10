@@ -397,6 +397,22 @@ When using `apiMode: "responses"`, the plugin normalizes request payloads for Om
 
 - removing unsupported token limit fields
 - converting reasoning aliases into the shape expected by Responses requests
+- stripping OpenCode/OpenAI-style aliases that OmniRoute currently rejects on `/v1/responses`, including `temperature`, `reasoningSummary`, `reasoning_summary`, `reasoningEffort`, `reasoning_effort`, and `textVerbosity`
+
+This plugin intentionally stays on `@ai-sdk/openai` for Responses mode and treats OmniRoute compatibility as a payload-shaping problem rather than switching to `@ai-sdk/openai-compatible`.
+
+For the current OmniRoute behavior tested locally, the plugin preserves Responses fields that are accepted for Codex/GPT-5-style models, including:
+
+- `store`
+- `prompt_cache_key`
+- `parallel_tool_calls`
+- `truncation`
+- `service_tier`
+- `top_p`
+- `presence_penalty`
+- `frequency_penalty`
+- `metadata`
+- `include`
 
 ## models.dev enrichment
 

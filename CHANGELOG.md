@@ -23,6 +23,7 @@ All notable changes to this project are documented in this file.
 
 - Verified `codex/gpt-5.4` accepts `temperature` on `/v1/chat/completions` but rejects it on `/v1/responses`, and covered the plugin workaround with tests.
 - Verified `npm test` passes with regression coverage for embedded reasoning reset and Responses payload sanitization.
+- Verified OmniRoute still accepts `store`, `prompt_cache_key`, `parallel_tool_calls`, `truncation`, `service_tier`, `top_p`, penalties, `metadata`, and `include` on `/v1/responses`, so the sanitizer keeps those fields intact.
 
 ## [1.2.7] - 2026-04-05
 
