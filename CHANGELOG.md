@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Switched OmniRoute chat mode to `@ai-sdk/openai`, removing the remaining runtime dependency on `@ai-sdk/openai-compatible`.
+- Normalized chat payloads for OmniRoute 3.5.9 by stripping unsupported reasoning summary aliases and converting input-shaped chat bodies into `messages` when needed.
+
+### Added
+
+- Added chat-mode regression coverage for reasoning summary cleanup and input-to-messages normalization.
+
+### Verification
+
+- Verified end-to-end OpenCode chat runs succeed on OmniRoute 3.5.9 for `codex/gpt-5.4`, `minimax/MiniMax-M2.1`, `glm/glm-5`, and `zai/glm-5`.
+
 ## [1.2.9] - 2026-04-09
 
 ### Changed

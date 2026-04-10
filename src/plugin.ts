@@ -17,7 +17,7 @@ import {
 import { fetchModels } from './models.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
-const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai';
 const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/openai';
 const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
 const DEBUG = process.env.OMNIROUTE_PLUGIN_DEBUG === '1';
@@ -853,6 +853,9 @@ function createFetchInterceptor(
     headers.set('Content-Type', 'application/json');
 
     const transformedBody = await transformRequestBody(input, init, url);
+    if (DEBUG && transformedBody !== undefined && url.includes('/chat/completions')) {
+      debugLog(`[OmniRoute] Final chat payload ${transformedBody}`);
+    }
 
     // Clone init to avoid mutating original
     const modifiedInit: RequestInit = {
@@ -915,6 +918,7 @@ async function transformRequestBody(
   let changed = false;
   const beforeImages = countImageParts(payload);
   changed = normalizeReasoningPayload(payload) || changed;
+  changed = normalizeChatPayload(payload, url) || changed;
   changed = normalizeResponsesPayload(payload, url) || changed;
   changed = slimCodexPayload(payload) || changed;
   changed = sanitizeGeminiToolSchemas(payload) || changed;
@@ -979,6 +983,84 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
   }
 
   return changed;
+}
+
+function normalizeChatPayload(payload: Record<string, unknown>, url: string): boolean {
+  if (!url.includes('/chat/completions')) {
+    return false;
+  }
+
+  let changed = false;
+
+  if (payload.input !== undefined && payload.messages === undefined) {
+    payload.messages = normalizeChatMessagesFromInput(payload.input);
+    delete payload.input;
+    changed = true;
+  }
+
+  if (payload.reasoningSummary !== undefined) {
+    delete payload.reasoningSummary;
+    changed = true;
+  }
+
+  if (payload.reasoning_summary !== undefined) {
+    delete payload.reasoning_summary;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function normalizeChatMessagesFromInput(input: unknown): unknown[] {
+  if (Array.isArray(input)) {
+    const messages: unknown[] = [];
+    for (const item of input) {
+      if (!isRecord(item)) continue;
+
+      const role = typeof item.role === 'string' ? item.role : 'user';
+      const content = normalizeChatMessageContent(item.content ?? item.input_text ?? item.text);
+      messages.push({ role, content });
+    }
+
+    return messages.length > 0 ? messages : [{ role: 'user', content: '' }];
+  }
+
+  if (typeof input === 'string') {
+    return [{ role: 'user', content: input }];
+  }
+
+  return [{ role: 'user', content: '' }];
+}
+
+function normalizeChatMessageContent(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  const parts: string[] = [];
+  for (const part of content) {
+    if (!isRecord(part)) continue;
+
+    if (typeof part.text === 'string') {
+      parts.push(part.text);
+      continue;
+    }
+
+    if (typeof part.input_text === 'string') {
+      parts.push(part.input_text);
+      continue;
+    }
+
+    if (part.type === 'input_text' && typeof part.text === 'string') {
+      parts.push(part.text);
+    }
+  }
+
+  return parts.join('\n');
 }
 
 function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {

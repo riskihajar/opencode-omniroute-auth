@@ -7,7 +7,7 @@ Determine whether the current Chat Completions-based integration is sufficient f
 ## Current State in This Repo
 
 - Provider defaults to chat mode (`api: 'chat'`) in `src/plugin.ts:33`.
-- Provider runtime uses `@ai-sdk/openai-compatible` in `src/plugin.ts:34`.
+- Provider runtime uses `@ai-sdk/openai` in `src/plugin.ts:34`.
 - Base URL defaults to OmniRoute `/v1` (`http://localhost:20128/v1`) in `src/constants.ts:11`.
 - Models are loaded from `/v1/models` with cache + fallback behavior in `src/models.ts`.
 - Request auth is injected via fetch interceptor in `src/plugin.ts:256`.

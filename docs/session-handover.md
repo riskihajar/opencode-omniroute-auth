@@ -11,7 +11,7 @@
 
 - Reviewed plugin implementation and confirmed current mode is chat-oriented:
   - `src/plugin.ts:33` sets provider `api: 'chat'`.
-  - `src/plugin.ts:34` uses `@ai-sdk/openai-compatible`.
+  - `src/plugin.ts:34` uses `@ai-sdk/openai`.
   - `src/plugin.ts:256`+ has fetch interceptor for auth/header injection.
   - `src/constants.ts:15` includes chat completions endpoint constant.
 - Researched external docs (via librarian subagents) on:

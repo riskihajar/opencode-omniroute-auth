@@ -64,7 +64,7 @@ test('config hook applies defaults and normalized apiMode', async () => {
   assert.equal(config.provider.omniroute.api, 'chat');
   assert.equal(config.provider.omniroute.options.apiMode, 'chat');
   assert.equal(config.provider.omniroute.options.baseURL, 'http://localhost:20128/v1');
-  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
   assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1');
 });
 
@@ -319,7 +319,7 @@ test('responses mode falls back anthropic-family models to chat provider runtime
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai');
   assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.url, 'http://localhost:20128/v1');
 });
 
@@ -353,7 +353,7 @@ test('responses mode falls back antigravity gemini models to chat provider runti
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm, '@ai-sdk/openai');
 });
 
 test('responses mode falls back mlx qwen models to chat provider runtime', async () => {
@@ -387,7 +387,7 @@ test('responses mode falls back mlx qwen models to chat provider runtime', async
 
   assert.equal(
     config.provider.omniroute.models['mlx/mlx-community/Qwen3.5-4B-MLX-8bit'].api.npm,
-    '@ai-sdk/openai-compatible',
+    '@ai-sdk/openai',
   );
 });
 
@@ -427,7 +427,7 @@ test('per-model apiMode override forces chat runtime even when global mode is re
   await plugin.config(config);
 
   assert.equal(config.provider.omniroute.options.modelMetadata['minimax/minimax-m1'].apiMode, 'chat');
-  assert.equal(config.provider.omniroute.models['minimax/minimax-m1'].api.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.models['minimax/minimax-m1'].api.npm, '@ai-sdk/openai');
 });
 
 test('per-model apiMode override can keep anthropic-family model on responses runtime', async () => {
@@ -859,6 +859,118 @@ test('responses payload strips temperature but chat completions keep it', async 
   assert.ok(chatCall);
   assert.equal(responsesCall.body.temperature, undefined);
   assert.equal(chatCall.body.temperature, 0.5);
+});
+
+test('chat payload strips unsupported reasoning summary aliases', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'codex/gpt-5.4',
+      messages: [{ role: 'user', content: 'test' }],
+      reasoningSummary: 'detailed',
+      reasoning_summary: 'concise',
+      textVerbosity: 'medium',
+      reasoningEffort: 'high',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningSummary, undefined);
+  assert.equal(forwardedBody.reasoning_summary, undefined);
+  assert.equal(forwardedBody.textVerbosity, 'medium');
+  assert.equal(forwardedBody.reasoningEffort, undefined);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
+});
+
+test('chat payload converts input-shaped bodies into messages', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'codex/gpt-5.4',
+      input: [{
+        role: 'user',
+        content: [{ type: 'input_text', text: 'Say OK only.' }],
+      }],
+      reasoningSummary: 'auto',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.input, undefined);
+  assert.ok(Array.isArray(forwardedBody.messages));
+  assert.deepEqual(forwardedBody.messages.at(-1), { role: 'user', content: 'Say OK only.' });
+  assert.equal(forwardedBody.messages[0].role, 'system');
+  assert.equal(forwardedBody.reasoningSummary, undefined);
 });
 
 test('responses payload strips chat-only reasoning aliases but keeps reasoning object', async () => {

@@ -19,7 +19,7 @@ This package exists for teams actually running OmniRoute in OpenCode and needing
 ### What is different here
 
 - **Real `apiMode: "responses"` wiring**
-  - `chat` uses `@ai-sdk/openai-compatible`
+  - `chat` uses `@ai-sdk/openai`
   - `responses` uses `@ai-sdk/openai`
 - **OmniRoute responses compatibility fixes**
   - normalizes/removes unsupported token limit fields on `/responses`
@@ -247,7 +247,7 @@ Minimal example:
 
 Uses:
 
-- `@ai-sdk/openai-compatible`
+- `@ai-sdk/openai`
 
 Best when your OmniRoute/OpenCode flow is primarily Chat Completions compatible.
 
@@ -399,7 +399,7 @@ When using `apiMode: "responses"`, the plugin normalizes request payloads for Om
 - converting reasoning aliases into the shape expected by Responses requests
 - stripping OpenCode/OpenAI-style aliases that OmniRoute currently rejects on `/v1/responses`, including `temperature`, `reasoningSummary`, `reasoning_summary`, `reasoningEffort`, `reasoning_effort`, and `textVerbosity`
 
-This plugin intentionally stays on `@ai-sdk/openai` for Responses mode and treats OmniRoute compatibility as a payload-shaping problem rather than switching to `@ai-sdk/openai-compatible`.
+This plugin intentionally stays on `@ai-sdk/openai` for both Chat and Responses modes and treats OmniRoute compatibility as a payload-shaping problem rather than relying on a separate OpenAI-compatible runtime.
 
 For the current OmniRoute behavior tested locally, the plugin preserves Responses fields that are accepted for Codex/GPT-5-style models, including:
 
