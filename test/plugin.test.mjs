@@ -916,6 +916,59 @@ test('responses payload strips chat-only reasoning aliases but keeps reasoning o
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
 });
 
+test('responses payload strips unsupported reasoning summary aliases', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'codex/gpt-5.4',
+      input: 'test',
+      reasoningSummary: 'detailed',
+      reasoning_summary: 'concise',
+      reasoning: { effort: 'high' },
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningSummary, undefined);
+  assert.equal(forwardedBody.reasoning_summary, undefined);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
+});
+
 test('responses payload converts reasoningEffort into reasoning object before cleanup', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;

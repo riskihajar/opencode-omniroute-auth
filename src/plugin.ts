@@ -963,6 +963,16 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
     changed = true;
   }
 
+  if (payload.reasoningSummary !== undefined) {
+    delete payload.reasoningSummary;
+    changed = true;
+  }
+
+  if (payload.reasoning_summary !== undefined) {
+    delete payload.reasoning_summary;
+    changed = true;
+  }
+
   if (payload.temperature !== undefined) {
     delete payload.temperature;
     changed = true;
