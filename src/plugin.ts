@@ -32,6 +32,8 @@ type AuthHook = NonNullable<Hooks['auth']>;
 type AuthLoader = NonNullable<AuthHook['loader']>;
 type AuthAccessor = Parameters<AuthLoader>[0];
 type ProviderDefinition = Parameters<AuthLoader>[1];
+type ChatHeadersHook = NonNullable<Hooks['chat.headers']>;
+type ChatParamsHook = NonNullable<Hooks['chat.params']>;
 
 export const OmniRouteAuthPlugin: Plugin = async (_input) => {
   return {
@@ -44,14 +46,13 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
         getModelMetadataConfig(existingProvider?.options),
         getProviderModelMetadataConfig(existingProvider?.models),
       );
-      const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
       const providerNpm = resolveProviderNpm(existingProvider?.npm, apiMode);
       const providerUrl = getProviderUrl(baseUrl, apiMode);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
         ...existingProvider,
         name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
-        api: providerApi,
+        api: providerUrl,
         npm: providerNpm,
         env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
         options: {
@@ -76,6 +77,8 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       config.provider = providers;
     },
     auth: createAuthHook(),
+    'chat.headers': createChatHeadersHook(),
+    'chat.params': createChatParamsHook(),
   };
 };
 
@@ -89,6 +92,48 @@ function createAuthHook(): AuthHook {
       },
     ],
     loader: loadProviderOptions,
+  };
+}
+
+function createChatHeadersHook(): ChatHeadersHook {
+  return (_input, output) => {
+    if (_input.model.providerID !== OMNIROUTE_PROVIDER_ID) {
+      return output;
+    }
+
+    return {
+      headers: {
+        ...output.headers,
+        originator: 'opencode',
+        session_id: _input.sessionID,
+      },
+    };
+  };
+}
+
+function createChatParamsHook(): ChatParamsHook {
+  return (_input, output) => {
+    if (_input.model.providerID !== OMNIROUTE_PROVIDER_ID) {
+      return output;
+    }
+
+    const apiMode = getApiMode(_input.provider.options);
+    const shouldMatchOpenAiCodexParams =
+      apiMode === 'responses' || isOpenAiCodexLikeModel(_input.model.api.id);
+
+    if (!shouldMatchOpenAiCodexParams) {
+      return output;
+    }
+
+    return {
+      ...output,
+      maxOutputTokens: undefined,
+      options: {
+        ...output.options,
+        store: false,
+        promptCacheKey: _input.sessionID,
+      },
+    };
   };
 }
 
@@ -144,23 +189,6 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
     modelsDev,
     modelMetadata,
   };
-}
-
-function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteApiMode {
-  if (isApiMode(api)) {
-    if (api !== apiMode) {
-      console.warn(
-        `[OmniRoute] provider.api (${api}) and options.apiMode (${apiMode}) differ; using options.apiMode.`,
-      );
-    }
-    return apiMode;
-  }
-
-  if (typeof api === 'string') {
-    console.warn(`[OmniRoute] Unsupported provider.api value: ${api}. Using ${apiMode}.`);
-  }
-
-  return apiMode;
 }
 
 function resolveProviderNpm(npm: unknown, apiMode: OmniRouteApiMode): string {
@@ -658,7 +686,7 @@ function getReasoningSupport(model: OmniRouteModel, config?: OmniRouteConfig): b
 }
 
 function supportsWidelySupportedReasoningEfforts(modelId: string): boolean {
-  return /(^|[-_/])(gpt-5\.4|gpt-5\.3-codex|gpt-5\.2-codex)(?:$|[-_/])/.test(
+  return /(^|[-_/])(gpt-5\.5|gpt-5\.4|gpt-5\.3-codex|gpt-5\.2-codex)(?:$|[-_/])/.test(
     modelId.toLowerCase(),
   );
 }
@@ -669,21 +697,32 @@ function supportsLikelyVisionInput(modelId: string): boolean {
   );
 }
 
+function isOpenAiCodexLikeModel(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?(?:$|[-_/])|(^|[-_/])o[34](?:$|[-_/])/.test(
+    id,
+  );
+}
+
 function getVariants(
   model: OmniRouteModel,
   reasoning: boolean,
   apiMode: OmniRouteApiMode,
 ): Record<string, unknown> {
   const supportsWidelySupportedEfforts = supportsWidelySupportedReasoningEfforts(model.id);
+  const generatedEfforts = supportsXHighReasoningEffort(model.id)
+    ? (['low', 'medium', 'high', 'xhigh'] as const)
+    : (['low', 'medium', 'high'] as const);
 
   const generated = (!reasoning && !supportsWidelySupportedEfforts)
     || hasEmbeddedReasoningVariant(model)
     ? {}
-    : {
-        low: getReasoningVariantOptions('low', apiMode),
-        medium: getReasoningVariantOptions('medium', apiMode),
-        high: getReasoningVariantOptions('high', apiMode),
-      };
+    : Object.fromEntries(
+        generatedEfforts.map((effort) => [
+          effort,
+          getReasoningVariantOptions(effort, apiMode, model.id),
+        ]),
+      );
 
   if (model.variants && Object.keys(model.variants).length > 0) {
     return {
@@ -695,11 +734,26 @@ function getVariants(
   return generated;
 }
 
+function supportsXHighReasoningEffort(modelId: string): boolean {
+  return /(^|[-_/])(gpt-5\.5|gpt-5\.4|gpt-5\.3-codex|gpt-5\.2-codex)(?:$|[-_/])/.test(
+    modelId.toLowerCase(),
+  );
+}
+
 function getReasoningVariantOptions(
   effort: 'low' | 'medium' | 'high' | 'minimal' | 'none' | 'max' | 'xhigh',
-  _apiMode: OmniRouteApiMode,
+  apiMode: OmniRouteApiMode,
+  modelId?: string,
 ): Record<string, unknown> {
-  return { reasoningEffort: effort };
+  if (apiMode !== 'responses' || !modelId || !isOpenAiCodexLikeModel(modelId)) {
+    return { reasoningEffort: effort };
+  }
+
+  return {
+    reasoningEffort: effort,
+    reasoningSummary: 'auto',
+    include: ['reasoning.encrypted_content'],
+  };
 }
 
 function hasEmbeddedReasoningVariant(model: OmniRouteModel): boolean {
@@ -941,6 +995,8 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
   }
 
   let changed = false;
+  const model = typeof payload.model === 'string' ? payload.model : '';
+  const keepOpenAiProgressFields = isOpenAiCodexLikeModel(model);
 
   if (payload.max_output_tokens !== undefined) {
     delete payload.max_output_tokens;
@@ -957,7 +1013,7 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
     changed = true;
   }
 
-  if (payload.textVerbosity !== undefined) {
+  if (!keepOpenAiProgressFields && payload.textVerbosity !== undefined) {
     delete payload.textVerbosity;
     changed = true;
   }
@@ -967,7 +1023,7 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
     changed = true;
   }
 
-  if (payload.reasoningSummary !== undefined) {
+  if (!keepOpenAiProgressFields && payload.reasoningSummary !== undefined) {
     delete payload.reasoningSummary;
     changed = true;
   }

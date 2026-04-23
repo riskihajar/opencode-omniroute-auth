@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-04-24
+
+### Changed
+
+- Aligned the OmniRoute provider-level `api` field with OpenCode's provider contract by keeping it as the base API URL instead of using it for the `chat` / `responses` mode flag.
+- Added OpenAI/Codex-like `chat.headers` and `chat.params` hooks so OmniRoute requests carry session affinity and default Responses options closer to the official OpenAI provider.
+- Preserved OpenAI progress fields such as `reasoningSummary` and `textVerbosity` for Codex/GPT-style Responses requests instead of stripping them globally.
+
+### Added
+
+- Added automatic `xhigh` reasoning variants for `gpt-5.5`, `gpt-5.4`, `gpt-5.3-codex`, and `gpt-5.2-codex` routed models.
+- Added OpenAI-style reasoning variant options for Codex/GPT-style Responses models, including `reasoningSummary: "auto"` and `include: ["reasoning.encrypted_content"]`.
+- Added regression coverage for provider contract normalization, chat hooks, OpenAI progress field preservation, and generated `xhigh`.
+
+### Verification
+
+- Verified `npm test` passes with 35 tests.
+- Verified `opencode run "halo" --model omniroute/cx/gpt-5.4` succeeds against the local plugin path.
+
+## [1.3.0] - 2026-04-23
+
 ### Changed
 
 - Switched OmniRoute chat mode to `@ai-sdk/openai`, removing the remaining runtime dependency on `@ai-sdk/openai-compatible`.

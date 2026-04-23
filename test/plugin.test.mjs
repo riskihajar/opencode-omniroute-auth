@@ -61,7 +61,7 @@ test('config hook applies defaults and normalized apiMode', async () => {
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.api, 'chat');
+  assert.equal(config.provider.omniroute.api, 'http://localhost:20128/v1');
   assert.equal(config.provider.omniroute.options.apiMode, 'chat');
   assert.equal(config.provider.omniroute.options.baseURL, 'http://localhost:20128/v1');
   assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
@@ -83,11 +83,62 @@ test('config hook switches provider package and URL for responses mode', async (
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.api, 'responses');
+  assert.equal(config.provider.omniroute.api, 'http://localhost:20128/v1');
   assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
   assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1');
   assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
   assert.equal(config.provider.omniroute.models['gpt-4o'].api.url, 'http://localhost:20128/v1');
+});
+
+test('chat hooks add OpenAI-like session headers and Codex params', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const hookInput = {
+    sessionID: 'session-123',
+    agent: 'build',
+    model: {
+      id: 'codex/gpt-5.4',
+      providerID: 'omniroute',
+      api: {
+        id: 'codex/gpt-5.4',
+        url: 'http://localhost:20128/v1',
+        npm: '@ai-sdk/openai',
+      },
+    },
+    provider: {
+      options: {
+        apiMode: 'responses',
+      },
+    },
+    message: {},
+  };
+
+  const headers = await plugin['chat.headers'](hookInput, {
+    headers: {
+      existing: 'kept',
+    },
+  });
+
+  assert.deepEqual(headers.headers, {
+    existing: 'kept',
+    originator: 'opencode',
+    session_id: 'session-123',
+  });
+
+  const params = await plugin['chat.params'](hookInput, {
+    temperature: 0.5,
+    topP: 1,
+    maxOutputTokens: 32000,
+    options: {
+      previous: true,
+    },
+  });
+
+  assert.equal(params.maxOutputTokens, undefined);
+  assert.deepEqual(params.options, {
+    previous: true,
+    store: false,
+    promptCacheKey: 'session-123',
+  });
 });
 
 test('responses mode preserves configured variants from provider options', async () => {
@@ -164,9 +215,21 @@ test('responses mode merges generated reasoning variants with explicit custom va
   await plugin.config(config);
 
   assert.deepEqual(config.provider.omniroute.models['codex/gpt-5.4'].variants, {
-    low: { reasoningEffort: 'low' },
-    medium: { reasoningEffort: 'medium' },
-    high: { reasoningEffort: 'high' },
+    low: {
+      reasoningEffort: 'low',
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
+    medium: {
+      reasoningEffort: 'medium',
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
+    high: {
+      reasoningEffort: 'high',
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
     xhigh: { reasoningEffort: 'xhigh' },
   });
 });
@@ -201,9 +264,61 @@ test('responses mode exposes generated reasoning variants for reasoning-capable 
   await plugin.config(config);
 
   assert.deepEqual(config.provider.omniroute.models['codex/gpt-5.4'].variants, {
-    low: { reasoningEffort: 'low' },
-    medium: { reasoningEffort: 'medium' },
-    high: { reasoningEffort: 'high' },
+    low: {
+      reasoningEffort: 'low',
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
+    medium: {
+      reasoningEffort: 'medium',
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
+    high: {
+      reasoningEffort: 'high',
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
+    xhigh: {
+      reasoningEffort: 'xhigh',
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
+  });
+});
+
+test('responses mode generates xhigh variant for GPT-5.5 routed models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'cx/gpt-5.5': {
+            name: 'GPT-5.5',
+            capabilities: {
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 256000,
+              output: 32000,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['cx/gpt-5.5'].variants.xhigh, {
+    reasoningEffort: 'xhigh',
+    reasoningSummary: 'auto',
+    include: ['reasoning.encrypted_content'],
   });
 });
 
@@ -1028,7 +1143,7 @@ test('responses payload strips chat-only reasoning aliases but keeps reasoning o
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
 });
 
-test('responses payload strips unsupported reasoning summary aliases', async () => {
+test('responses payload keeps OpenAI progress fields for Codex-style models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;
 
@@ -1076,7 +1191,7 @@ test('responses payload strips unsupported reasoning summary aliases', async () 
   });
 
   assert.ok(forwardedBody);
-  assert.equal(forwardedBody.reasoningSummary, undefined);
+  assert.equal(forwardedBody.reasoningSummary, 'detailed');
   assert.equal(forwardedBody.reasoning_summary, undefined);
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
 });

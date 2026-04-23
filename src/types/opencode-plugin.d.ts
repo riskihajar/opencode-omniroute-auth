@@ -93,9 +93,46 @@ declare module '@opencode-ai/plugin' {
     methods: AuthMethod[];
   }
 
+  export interface ChatHookInput {
+    sessionID: string;
+    agent: string;
+    model: {
+      id: string;
+      providerID: string;
+      api: {
+        id: string;
+        url: string;
+        npm: string;
+      };
+      [key: string]: unknown;
+    };
+    provider: Provider;
+    message: unknown;
+  }
+
+  export interface ChatHeadersOutput {
+    headers: Record<string, string>;
+  }
+
+  export interface ChatParamsOutput {
+    temperature?: number;
+    topP?: number;
+    topK?: number;
+    maxOutputTokens?: number;
+    options: Record<string, unknown>;
+  }
+
   export interface Hooks {
     config?: (input: Config) => Promise<void>;
     auth?: AuthHook;
+    'chat.headers'?: (
+      input: ChatHookInput,
+      output: ChatHeadersOutput,
+    ) => Promise<ChatHeadersOutput> | ChatHeadersOutput;
+    'chat.params'?: (
+      input: ChatHookInput,
+      output: ChatParamsOutput,
+    ) => Promise<ChatParamsOutput> | ChatParamsOutput;
     [key: string]: unknown;
   }
 
