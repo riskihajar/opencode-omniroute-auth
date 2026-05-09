@@ -127,6 +127,119 @@ test('config hook preserves explicit input limits from provider model config', a
   });
 });
 
+test('loader clamps Codex GPT-5.5 routed limits to a realistic Plus-tier budget', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'codex/gpt-5.5',
+            context_length: 1050000,
+            max_input_tokens: 1050000,
+            max_output_tokens: 128000,
+            capabilities: {
+              vision: true,
+              tool_calling: true,
+              reasoning: true,
+            },
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'responses',
+    },
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.deepEqual(provider.models['codex/gpt-5.5'].limit, {
+    context: 400000,
+    input: 272000,
+    output: 128000,
+  });
+});
+
+test('loader can preserve advertised GPT-5.5 routed 1M window when explicitly enabled', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'codex/gpt-5.5',
+            context_length: 1050000,
+            max_input_tokens: 1050000,
+            max_output_tokens: 128000,
+            capabilities: {
+              vision: true,
+              tool_calling: true,
+              reasoning: true,
+            },
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'responses',
+      enableFullGpt55Context: true,
+    },
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.deepEqual(provider.models['codex/gpt-5.5'].limit, {
+    context: 1050000,
+    input: 1050000,
+    output: 128000,
+  });
+});
+
 test('chat hooks add OpenAI-like session headers and Codex params', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const hookInput = {

@@ -177,6 +177,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   const baseUrl = getBaseUrl(provider.options);
   const modelCacheTtl = getPositiveNumber(provider.options, 'modelCacheTtl');
   const refreshOnList = getBoolean(provider.options, 'refreshOnList');
+  const enableFullGpt55Context = getBoolean(provider.options, 'enableFullGpt55Context');
   const modelsDev = getModelsDevConfig(provider.options);
   const modelMetadata = getModelMetadataConfig(provider.options);
 
@@ -186,6 +187,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
     apiMode: getApiMode(provider.options),
     modelCacheTtl,
     refreshOnList,
+    enableFullGpt55Context,
     modelsDev,
     modelMetadata,
   };

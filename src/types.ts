@@ -112,6 +112,8 @@ export interface OmniRouteConfig {
   modelsDev?: OmniRouteModelsDevConfig;
   /** Optional metadata overrides/additions for custom/virtual models */
   modelMetadata?: OmniRouteModelMetadataConfig;
+  /** Trust OmniRoute's advertised 1M GPT-5.5 routed window instead of clamping to a Plus-tier budget */
+  enableFullGpt55Context?: boolean;
 }
 
 export interface OmniRouteProviderModelModalities {

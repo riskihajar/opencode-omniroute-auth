@@ -29,6 +29,28 @@ function getModelCapability(
   return typeof capability === 'boolean' ? capability : undefined;
 }
 
+function applyRuntimeLimitOverrides(
+  model: OmniRouteModel,
+  config: OmniRouteConfig,
+): OmniRouteModel {
+  if (config.enableFullGpt55Context === true) {
+    return model;
+  }
+
+  if (!/^(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(model.id)) {
+    return model;
+  }
+
+  // OmniRoute currently advertises the full GPT-5.5 API window for Codex-routed
+  // models, but Plus-tier Codex sessions hit a smaller effective input budget.
+  return {
+    ...model,
+    contextWindow: 400000,
+    maxInputTokens: 272000,
+    maxTokens: model.maxTokens ?? 128000,
+  };
+}
+
 /**
  * Model cache entry
  */
@@ -131,7 +153,7 @@ export async function fetchModels(
           ? record.input_modalities.filter((value): value is string => typeof value === 'string')
           : [];
 
-        return {
+        return applyRuntimeLimitOverrides({
           ...model,
         // Ensure required fields
           id: model.id,
@@ -151,7 +173,7 @@ export async function fetchModels(
           supportsTools:
             model.supportsTools ?? getModelCapability(record.capabilities, 'tool_calling'),
           reasoning: model.reasoning ?? getModelCapability(record.capabilities, 'reasoning'),
-        };
+        }, config);
       });
 
     // Enrich with models.dev and combo capabilities

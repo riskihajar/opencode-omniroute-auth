@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-05-09
+
+### Changed
+
+- Clamped routed `codex/cx gpt-5.5*` model limits from OmniRoute `/v1/models` to a realistic Plus-tier Codex budget by default (`400k` context, `272k` input, `128k` output) so OpenCode context percentages and compaction behavior match effective runtime limits more closely.
+
+### Added
+
+- Added `provider.omniroute.options.enableFullGpt55Context` to opt back into OmniRoute's advertised `1.05M` GPT-5.5 routed window when the backing account or route truly supports it.
+
+### Verification
+
+- Verified `npm test` passes with 39 tests, including regression coverage for default GPT-5.5 clamping and the explicit `enableFullGpt55Context` opt-in path.
+
 ## [1.3.2] - 2026-05-09
 
 ### Fixed

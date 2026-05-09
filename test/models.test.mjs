@@ -147,8 +147,8 @@ test('fetchModels maps OmniRoute token limit fields from /v1/models', async () =
 
   const [model] = await fetchModels(CONFIG, CONFIG.apiKey, true);
 
-  assert.equal(model.contextWindow, 1050000);
-  assert.equal(model.maxInputTokens, 1050000);
+  assert.equal(model.contextWindow, 400000);
+  assert.equal(model.maxInputTokens, 272000);
   assert.equal(model.maxTokens, 128000);
   assert.equal(model.supportsVision, true);
   assert.equal(model.supportsTools, true);
