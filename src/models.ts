@@ -13,6 +13,22 @@ import {
 } from './models-dev.js';
 import { enrichComboModels, clearComboCache } from './omniroute-combos.js';
 
+function getPositiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function getModelCapability(
+  value: unknown,
+  key: 'vision' | 'tool_calling' | 'reasoning',
+): boolean | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const capability = (value as Record<string, unknown>)[key];
+  return typeof capability === 'boolean' ? capability : undefined;
+}
+
 /**
  * Model cache entry
  */
@@ -109,21 +125,34 @@ export async function fetchModels(
         (model): model is OmniRouteModel =>
           model !== null && model !== undefined && typeof model.id === 'string',
       )
-      .map((model) => ({
-        ...model,
+      .map((model) => {
+        const record = model as OmniRouteModel & Record<string, unknown>;
+        const inputModalities = Array.isArray(record.input_modalities)
+          ? record.input_modalities.filter((value): value is string => typeof value === 'string')
+          : [];
+
+        return {
+          ...model,
         // Ensure required fields
-        id: model.id,
-        name: model.name || model.id,
-        root: typeof model.root === 'string' ? model.root : undefined,
-        owned_by: typeof model.owned_by === 'string' ? model.owned_by : undefined,
-        description: model.description || `OmniRoute model: ${model.id}`,
+          id: model.id,
+          name: model.name || model.id,
+          root: typeof model.root === 'string' ? model.root : undefined,
+          owned_by: typeof model.owned_by === 'string' ? model.owned_by : undefined,
+          description: model.description || `OmniRoute model: ${model.id}`,
         // Keep undefined for enrichment to work properly
-        contextWindow: model.contextWindow,
-        maxTokens: model.maxTokens,
-        supportsStreaming: model.supportsStreaming,
-        supportsVision: model.supportsVision,
-        supportsTools: model.supportsTools,
-      }));
+          contextWindow: model.contextWindow ?? getPositiveNumber(record.context_length),
+          maxInputTokens: model.maxInputTokens ?? getPositiveNumber(record.max_input_tokens),
+          maxTokens: model.maxTokens ?? getPositiveNumber(record.max_output_tokens),
+          supportsStreaming: model.supportsStreaming ?? true,
+          supportsVision:
+            model.supportsVision
+            ?? getModelCapability(record.capabilities, 'vision')
+            ?? inputModalities.includes('image'),
+          supportsTools:
+            model.supportsTools ?? getModelCapability(record.capabilities, 'tool_calling'),
+          reasoning: model.reasoning ?? getModelCapability(record.capabilities, 'reasoning'),
+        };
+      });
 
     // Enrich with models.dev and combo capabilities
     const models = await enrichModelMetadata(rawModels, config);
@@ -491,6 +520,7 @@ function mergeModelMetadata(model: OmniRouteModel, metadata: OmniRouteModelMetad
     ...(metadata.name !== undefined ? { name: metadata.name } : {}),
     ...(metadata.description !== undefined ? { description: metadata.description } : {}),
     ...(metadata.contextWindow !== undefined ? { contextWindow: metadata.contextWindow } : {}),
+    ...(metadata.maxInputTokens !== undefined ? { maxInputTokens: metadata.maxInputTokens } : {}),
     ...(metadata.maxTokens !== undefined ? { maxTokens: metadata.maxTokens } : {}),
     ...(metadata.supportsStreaming !== undefined ? { supportsStreaming: metadata.supportsStreaming } : {}),
     ...(metadata.supportsVision !== undefined ? { supportsVision: metadata.supportsVision } : {}),

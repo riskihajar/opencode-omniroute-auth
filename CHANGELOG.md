@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-05-09
+
+### Fixed
+
+- Fixed OmniRoute `/v1/models` limit hydration so `context_length`, `max_input_tokens`, and `max_output_tokens` are normalized into the OpenCode provider model registry.
+- Fixed seeded provider model round-tripping so explicit `limit.input` values from `opencode.json` are preserved instead of being recomputed.
+
+### Verification
+
+- Verified `npm test` passes with 37 tests, including regression coverage for OmniRoute token limit field mapping and explicit provider `limit.input` preservation.
+
 ## [1.3.1] - 2026-04-24
 
 ### Changed

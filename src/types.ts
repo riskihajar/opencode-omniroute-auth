@@ -8,6 +8,7 @@ export interface OmniRouteModel {
   owned_by?: string;
   description?: string;
   contextWindow?: number;
+  maxInputTokens?: number;
   maxTokens?: number;
   supportsStreaming?: boolean;
   supportsVision?: boolean;
@@ -30,6 +31,7 @@ export interface OmniRouteModelMetadata {
   name?: string;
   description?: string;
   contextWindow?: number;
+  maxInputTokens?: number;
   maxTokens?: number;
   supportsStreaming?: boolean;
   supportsVision?: boolean;
@@ -154,6 +156,7 @@ export interface OmniRouteProviderModel {
   };
   limit: {
     context: number;
+    input?: number;
     output: number;
   };
   options: Record<string, unknown>;

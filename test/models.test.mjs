@@ -105,3 +105,52 @@ test('fetchModels falls back to defaults when response shape is invalid', async 
   assert.ok(models.length > 0);
   assert.ok(typeof models[0].id === 'string');
 });
+
+test('fetchModels maps OmniRoute token limit fields from /v1/models', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'cx/gpt-5.5-xhigh',
+            object: 'model',
+            root: 'gpt-5.5-xhigh',
+            owned_by: 'codex',
+            capabilities: {
+              vision: true,
+              tool_calling: true,
+              reasoning: true,
+            },
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+            context_length: 1050000,
+            max_input_tokens: 1050000,
+            max_output_tokens: 128000,
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
+  };
+
+  const [model] = await fetchModels(CONFIG, CONFIG.apiKey, true);
+
+  assert.equal(model.contextWindow, 1050000);
+  assert.equal(model.maxInputTokens, 1050000);
+  assert.equal(model.maxTokens, 128000);
+  assert.equal(model.supportsVision, true);
+  assert.equal(model.supportsTools, true);
+  assert.equal(model.reasoning, true);
+});

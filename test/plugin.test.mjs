@@ -90,6 +90,43 @@ test('config hook switches provider package and URL for responses mode', async (
   assert.equal(config.provider.omniroute.models['gpt-4o'].api.url, 'http://localhost:20128/v1');
 });
 
+test('config hook preserves explicit input limits from provider model config', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'cx/gpt-5.5-xhigh': {
+            name: 'GPT-5.5 XHigh',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 1050000,
+              input: 1050000,
+              output: 128000,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['cx/gpt-5.5-xhigh'].limit, {
+    context: 1050000,
+    input: 1050000,
+    output: 128000,
+  });
+});
+
 test('chat hooks add OpenAI-like session headers and Codex params', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const hookInput = {

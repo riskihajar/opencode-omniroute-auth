@@ -399,8 +399,10 @@ function getProviderModelMetadataConfig(
 
     if (isRecord(raw.limit)) {
       const context = raw.limit.context;
+      const input = raw.limit.input;
       const output = raw.limit.output;
       if (typeof context === 'number' && context > 0) next.contextWindow = context;
+      if (typeof input === 'number' && input > 0) next.maxInputTokens = input;
       if (typeof output === 'number' && output > 0) next.maxTokens = output;
     }
 
@@ -543,6 +545,7 @@ function getConfigSeedModels(models: unknown): OmniRouteModel[] {
           : undefined,
       contextWindow:
         typeof limit?.context === 'number' && limit.context > 0 ? limit.context : undefined,
+      maxInputTokens: typeof limit?.input === 'number' && limit.input > 0 ? limit.input : undefined,
       maxTokens: typeof limit?.output === 'number' && limit.output > 0 ? limit.output : undefined,
       supportsVision:
         typeof capabilities?.attachment === 'boolean' ? capabilities.attachment : undefined,
@@ -848,6 +851,7 @@ function getModelFamily(modelId: string): string {
 
 function getModelLimits(model: OmniRouteModel): { context: number; input?: number; output: number } {
   const explicitContext = model.contextWindow;
+  const explicitInput = model.maxInputTokens;
   const explicitOutput = model.maxTokens;
   const modelId = model.id.toLowerCase();
   const codexLike = /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$|(^|[-_/])o[34](?:$|[-_/])/.test(modelId);
@@ -855,12 +859,15 @@ function getModelLimits(model: OmniRouteModel): { context: number; input?: numbe
   if (codexLike) {
     const context = explicitContext ?? 256000;
     const output = explicitOutput ?? 32000;
-    const input = Math.max(8192, context - output);
+    const input = explicitInput ?? Math.max(8192, context - output);
     return { context, input, output };
   }
 
   const context = explicitContext ?? 32768;
   const output = explicitOutput ?? 8192;
+  if (explicitInput !== undefined) {
+    return { context, input: explicitInput, output };
+  }
   if (context > output) {
     return { context, input: context - output, output };
   }
