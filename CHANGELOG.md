@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Switched `apiMode: "chat"` and per-model chat overrides back to `@ai-sdk/openai-compatible` so OpenCode uses Chat Completions instead of the built-in `@ai-sdk/openai` loader, which always selects the Responses API.
+- Fixed provider model conversion so configured model metadata is applied before effective `apiMode` and model limits are calculated, including seeded per-model `enableFullGpt55Context` overrides.
+
 ## [1.3.3] - 2026-05-09
 
 ### Changed

@@ -17,7 +17,7 @@ import {
 import { fetchModels } from './models.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
-const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai';
+const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai-compatible';
 const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/openai';
 const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
 const DEBUG = process.env.OMNIROUTE_PLUGIN_DEBUG === '1';
@@ -622,6 +622,10 @@ function getConfigSeedModels(models: unknown): OmniRouteModel[] {
         isRecord(metadata.variants) && Object.keys(metadata.variants).length > 0
           ? metadata.variants
           : undefined,
+      enableFullGpt55Context:
+        typeof metadata.enableFullGpt55Context === 'boolean'
+          ? metadata.enableFullGpt55Context
+          : undefined,
     } satisfies OmniRouteModel;
   });
 }
@@ -654,9 +658,9 @@ function toProviderModel(
   baseUrl: string,
   config?: OmniRouteConfig,
 ): OmniRouteProviderModel {
-  const apiMode = getEffectiveApiModeForModel(model, config?.apiMode ?? 'chat');
   const configured = getConfiguredModelMetadata(model.id, config);
   const effectiveModel = configured ? { ...model, ...configured } : model;
+  const apiMode = getEffectiveApiModeForModel(effectiveModel, config?.apiMode ?? 'chat');
   const embeddedVariant = getEmbeddedReasoningVariant(model.id, effectiveModel);
   const supportsVisionOverride = getCapabilityOverride(model.id, configured, 'supportsVision');
   const supportsVision = typeof supportsVisionOverride === 'boolean'
@@ -716,7 +720,7 @@ function toProviderModel(
         write: 0,
       },
     },
-    limit: getModelLimits(model),
+    limit: getModelLimits(effectiveModel),
     options,
     headers: {},
     status: 'active',
@@ -905,11 +909,12 @@ function getModelFamily(modelId: string): string {
 }
 
 function getModelLimits(model: OmniRouteModel): { context: number; input?: number; output: number } {
-  const explicitContext = model.contextWindow;
-  const explicitInput = model.maxInputTokens;
-  const explicitOutput = model.maxTokens;
   const modelId = model.id.toLowerCase();
   const codexLike = /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$|(^|[-_/])o[34](?:$|[-_/])/.test(modelId);
+  const gpt55CodexRoute = /^(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(modelId) && model.enableFullGpt55Context !== true;
+  const explicitContext = gpt55CodexRoute ? Math.min(model.contextWindow ?? 400000, 400000) : model.contextWindow;
+  const explicitInput = gpt55CodexRoute ? Math.min(model.maxInputTokens ?? 272000, 272000) : model.maxInputTokens;
+  const explicitOutput = model.maxTokens;
 
   if (codexLike) {
     const context = explicitContext ?? 256000;

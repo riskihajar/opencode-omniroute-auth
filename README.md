@@ -19,7 +19,7 @@ This package exists for teams actually running OmniRoute in OpenCode and needing
 ### What is different here
 
 - **Real `apiMode: "responses"` wiring**
-  - `chat` uses `@ai-sdk/openai`
+  - `chat` uses `@ai-sdk/openai-compatible`
   - `responses` uses `@ai-sdk/openai`
 - **OmniRoute responses compatibility fixes**
   - normalizes/removes unsupported token limit fields on `/responses`
@@ -240,6 +240,7 @@ Minimal example:
 | `provider.omniroute.options.modelCacheTtl` | `number` | Cache TTL in ms |
 | `provider.omniroute.options.modelsDev` | `object` | Configure models.dev enrichment |
 | `provider.omniroute.options.modelMetadata` | `object \| array` | Override/add model metadata, including per-model `apiMode` and `resetEmbeddedReasoningVariant` |
+| `provider.omniroute.options.enableFullGpt55Context` | `boolean` | Trust OmniRoute's advertised full GPT-5.5 routed context instead of the conservative default clamp. Default: `false` |
 
 ## API modes
 
@@ -247,9 +248,9 @@ Minimal example:
 
 Uses:
 
-- `@ai-sdk/openai`
+- `@ai-sdk/openai-compatible`
 
-Best when your OmniRoute/OpenCode flow is primarily Chat Completions compatible.
+Best when your OmniRoute/OpenCode flow is primarily Chat Completions compatible. OpenCode's built-in `@ai-sdk/openai` loader targets the Responses API, so chat mode uses `@ai-sdk/openai-compatible` to force the Chat Completions path.
 
 ### `responses`
 
@@ -356,6 +357,32 @@ Current built-in fallback behavior in global `responses` mode:
 
 This matters because some routed models may advertise support for both Chat Completions and Responses, but still emit `chat.completion.chunk` events when called through `/v1/responses`. In that case, the plugin prefers the safer `chat` runtime unless you explicitly override the model back to `responses`.
 
+### GPT-5.5 routed context limits
+
+OmniRoute may advertise `codex/gpt-5.5*` and `cx/gpt-5.5*` routes with the full API context window. In OpenCode, that can make context percentages and compaction decisions too optimistic when the backing account is a Codex/Plus-style route with a smaller effective input budget.
+
+By default, this plugin clamps those routed models to:
+
+- `context`: `400000`
+- `input`: `272000`
+- `output`: provider/default output, usually `128000`
+
+If your backing route truly supports the advertised full window, opt back in globally:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "enableFullGpt55Context": true
+      }
+    }
+  }
+}
+```
+
+For seeded custom models, you can also set `enableFullGpt55Context: true` on the model entry.
+
 For Cursor specifically:
 
 - `cu/default` and `cursor/default` are forced to `chat` because OmniRoute currently returns Chat Completions streaming there even when OpenCode is globally configured for `responses`
@@ -399,7 +426,7 @@ When using `apiMode: "responses"`, the plugin normalizes request payloads for Om
 - converting reasoning aliases into the shape expected by Responses requests
 - stripping OpenCode/OpenAI-style aliases that OmniRoute currently rejects on `/v1/responses`, including `temperature`, `reasoningSummary`, `reasoning_summary`, `reasoningEffort`, `reasoning_effort`, and `textVerbosity`
 
-This plugin intentionally stays on `@ai-sdk/openai` for both Chat and Responses modes and treats OmniRoute compatibility as a payload-shaping problem rather than relying on a separate OpenAI-compatible runtime.
+This plugin uses `@ai-sdk/openai` for Responses mode and `@ai-sdk/openai-compatible` for Chat mode. OpenCode's built-in `@ai-sdk/openai` loader targets the Responses API, while `@ai-sdk/openai-compatible` keeps Chat Completions-only routed models on `/chat/completions`.
 
 For the current OmniRoute behavior tested locally, the plugin preserves Responses fields that are accepted for Codex/GPT-5-style models, including:
 

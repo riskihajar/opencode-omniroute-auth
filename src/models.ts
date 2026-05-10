@@ -48,6 +48,7 @@ function applyRuntimeLimitOverrides(
     contextWindow: 400000,
     maxInputTokens: 272000,
     maxTokens: model.maxTokens ?? 128000,
+    enableFullGpt55Context: false,
   };
 }
 
@@ -173,6 +174,7 @@ export async function fetchModels(
           supportsTools:
             model.supportsTools ?? getModelCapability(record.capabilities, 'tool_calling'),
           reasoning: model.reasoning ?? getModelCapability(record.capabilities, 'reasoning'),
+          enableFullGpt55Context: config.enableFullGpt55Context === true,
         }, config);
       });
 
@@ -547,6 +549,9 @@ function mergeModelMetadata(model: OmniRouteModel, metadata: OmniRouteModelMetad
     ...(metadata.contextWindow !== undefined ? { contextWindow: metadata.contextWindow } : {}),
     ...(metadata.maxInputTokens !== undefined ? { maxInputTokens: metadata.maxInputTokens } : {}),
     ...(metadata.maxTokens !== undefined ? { maxTokens: metadata.maxTokens } : {}),
+    ...(metadata.enableFullGpt55Context !== undefined
+      ? { enableFullGpt55Context: metadata.enableFullGpt55Context }
+      : {}),
     ...(metadata.supportsStreaming !== undefined ? { supportsStreaming: metadata.supportsStreaming } : {}),
     ...(metadata.supportsVision !== undefined ? { supportsVision: metadata.supportsVision } : {}),
     ...(metadata.supportsTools !== undefined ? { supportsTools: metadata.supportsTools } : {}),
