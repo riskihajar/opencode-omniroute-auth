@@ -33,11 +33,11 @@ function applyRuntimeLimitOverrides(
   model: OmniRouteModel,
   config: OmniRouteConfig,
 ): OmniRouteModel {
-  if (config.enableFullGpt55Context === true) {
+  if (config.enableFullGpt55Context === true || model.enableFullGpt55Context === true) {
     return model;
   }
 
-  if (!/^(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(model.id)) {
+  if (!/(^|\/)(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(model.id)) {
     return model;
   }
 
@@ -48,7 +48,6 @@ function applyRuntimeLimitOverrides(
     contextWindow: 400000,
     maxInputTokens: 272000,
     maxTokens: model.maxTokens ?? 128000,
-    enableFullGpt55Context: false,
   };
 }
 
@@ -154,7 +153,7 @@ export async function fetchModels(
           ? record.input_modalities.filter((value): value is string => typeof value === 'string')
           : [];
 
-        return applyRuntimeLimitOverrides({
+        return {
           ...model,
         // Ensure required fields
           id: model.id,
@@ -175,7 +174,7 @@ export async function fetchModels(
             model.supportsTools ?? getModelCapability(record.capabilities, 'tool_calling'),
           reasoning: model.reasoning ?? getModelCapability(record.capabilities, 'reasoning'),
           enableFullGpt55Context: config.enableFullGpt55Context === true,
-        }, config);
+        };
       });
 
     // Enrich with models.dev and combo capabilities. Apply runtime limit

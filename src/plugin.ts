@@ -911,7 +911,7 @@ function getModelFamily(modelId: string): string {
 function getModelLimits(model: OmniRouteModel): { context: number; input?: number; output: number } {
   const modelId = model.id.toLowerCase();
   const codexLike = /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$|(^|[-_/])o[34](?:$|[-_/])/.test(modelId);
-  const gpt55CodexRoute = /^(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(modelId) && model.enableFullGpt55Context !== true;
+  const gpt55CodexRoute = /(^|\/)(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(modelId) && model.enableFullGpt55Context !== true;
   const explicitContext = gpt55CodexRoute ? Math.min(model.contextWindow ?? 400000, 400000) : model.contextWindow;
   const explicitInput = gpt55CodexRoute ? Math.min(model.maxInputTokens ?? 272000, 272000) : model.maxInputTokens;
   const explicitOutput = model.maxTokens;
