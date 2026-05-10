@@ -176,8 +176,11 @@ export async function fetchModels(
         }, config);
       });
 
-    // Enrich with models.dev and combo capabilities
-    const models = await enrichModelMetadata(rawModels, config);
+    // Enrich with models.dev and combo capabilities. Apply runtime limit
+    // overrides again afterward because enrichment may reintroduce the
+    // advertised 1M GPT-5.5 window from external metadata.
+    const models = (await enrichModelMetadata(rawModels, config))
+      .map((model) => applyRuntimeLimitOverrides(model, config));
 
     // Update cache
     modelCache.set(cacheKey, {

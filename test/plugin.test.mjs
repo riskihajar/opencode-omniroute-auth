@@ -181,7 +181,7 @@ test('config hook eagerly hydrates OmniRoute models when API key env is availabl
   }
 });
 
-test('config hook preserves explicit input limits from provider model config', async () => {
+test('config hook clamps GPT-5.5 provider model config by default', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const config = {
     provider: {
@@ -212,8 +212,8 @@ test('config hook preserves explicit input limits from provider model config', a
   await plugin.config(config);
 
   assert.deepEqual(config.provider.omniroute.models['cx/gpt-5.5-xhigh'].limit, {
-    context: 1050000,
-    input: 1050000,
+    context: 400000,
+    input: 272000,
     output: 128000,
   });
 });

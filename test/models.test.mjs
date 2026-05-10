@@ -129,6 +129,73 @@ test('fetchModels maps OmniRoute token limit fields from /v1/models', async () =
   assert.equal(model.reasoning, true);
 });
 
+test('fetchModels reapplies GPT-5.5 clamp after models.dev enrichment', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'codex/gpt-5.5',
+              object: 'model',
+              context_length: 1050000,
+              max_input_tokens: 1050000,
+              max_output_tokens: 128000,
+              capabilities: {
+                vision: true,
+                tool_calling: true,
+                reasoning: true,
+              },
+              input_modalities: ['text', 'image'],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
+    if (url === 'https://models.dev/api.json') {
+      return new Response(
+        JSON.stringify([
+          {
+            id: 'openai/codex/gpt-5.5',
+            object: 'model',
+            pricing: { input: 1, output: 2 },
+            limit: {
+              context: 1050000,
+              output: 128000,
+            },
+            modalities: {
+              input: ['text', 'image'],
+              output: ['text'],
+            },
+            tool_call: true,
+            reasoning: true,
+          },
+        ]),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const [model] = await fetchModels(CONFIG, CONFIG.apiKey, true);
+
+  assert.equal(model.contextWindow, 400000);
+  assert.equal(model.maxInputTokens, 272000);
+  assert.equal(model.maxTokens, 128000);
+});
+
 test('fetchModels does not call /api/combos unless explicitly enabled', async () => {
   let comboCalls = 0;
 
