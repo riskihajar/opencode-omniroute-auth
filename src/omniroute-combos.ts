@@ -50,6 +50,10 @@ const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 export async function fetchComboData(
   config: OmniRouteConfig,
 ): Promise<Map<string, OmniRouteCombo> | null> {
+  if (config.enableCombos !== true) {
+    return null;
+  }
+
   const baseUrl = config.baseUrl;
   const apiKey = config.apiKey;
 

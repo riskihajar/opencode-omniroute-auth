@@ -51,6 +51,7 @@ test('config hook applies defaults and normalized apiMode', async () => {
   const config = {
     provider: {
       omniroute: {
+        env: ['TEST_OMNIROUTE_API_KEY_DISABLED'],
         options: {
           baseURL: 'http://localhost:20128/v1',
           apiMode: 'invalid-mode',
@@ -73,6 +74,7 @@ test('config hook switches provider package and URL for responses mode', async (
   const config = {
     provider: {
       omniroute: {
+        env: ['TEST_OMNIROUTE_API_KEY_DISABLED'],
         options: {
           baseURL: 'http://localhost:20128/v1',
           apiMode: 'responses',
@@ -88,6 +90,95 @@ test('config hook switches provider package and URL for responses mode', async (
   assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1');
   assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
   assert.equal(config.provider.omniroute.models['gpt-4o'].api.url, 'http://localhost:20128/v1');
+});
+
+test('config hook eagerly hydrates OmniRoute models when API key env is available', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const previousApiKey = process.env.OMNIROUTE_API_KEY;
+  process.env.OMNIROUTE_API_KEY = 'secret-key';
+
+  try {
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'codex/gpt-5.5',
+              context_length: 1050000,
+              max_input_tokens: 1050000,
+              max_output_tokens: 128000,
+              capabilities: {
+                vision: true,
+                tool_calling: true,
+                reasoning: true,
+              },
+              input_modalities: ['text', 'image'],
+              output_modalities: ['text'],
+            },
+            {
+              id: 'glm/glm-5.1',
+              context_length: 131072,
+              max_output_tokens: 16384,
+              capabilities: {
+                tool_calling: true,
+              },
+              input_modalities: ['text'],
+              output_modalities: ['text'],
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.endsWith('/api/combos')) {
+        return new Response(JSON.stringify({ combos: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url === 'https://models.dev/api.json') {
+        return new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const config = {
+      provider: {
+        omniroute: {
+          options: {
+            baseURL: 'http://localhost:20128/v1',
+            apiMode: 'responses',
+            refreshOnList: true,
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+
+    assert.deepEqual(config.provider.omniroute.models['codex/gpt-5.5'].limit, {
+      context: 400000,
+      input: 272000,
+      output: 128000,
+    });
+    assert.equal(config.provider.omniroute.models['glm/glm-5.1'].limit.context, 131072);
+  } finally {
+    if (previousApiKey === undefined) {
+      delete process.env.OMNIROUTE_API_KEY;
+    } else {
+      process.env.OMNIROUTE_API_KEY = previousApiKey;
+    }
+  }
 });
 
 test('config hook preserves explicit input limits from provider model config', async () => {

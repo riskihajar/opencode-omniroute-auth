@@ -114,6 +114,8 @@ export interface OmniRouteConfig {
   modelMetadata?: OmniRouteModelMetadataConfig;
   /** Trust OmniRoute's advertised 1M GPT-5.5 routed window instead of clamping to a Plus-tier budget */
   enableFullGpt55Context?: boolean;
+  /** Fetch and resolve OmniRoute combo models from /api/combos (default: false) */
+  enableCombos?: boolean;
 }
 
 export interface OmniRouteProviderModelModalities {

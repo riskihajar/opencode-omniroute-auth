@@ -28,15 +28,6 @@ test('fetchModels caches successful responses', async () => {
   let calls = 0;
 
   global.fetch = async (input) => {
-    const url = input instanceof Request ? input.url : String(input);
-    if (url.endsWith('/api/combos')) {
-      calls += 1;
-      return new Response(JSON.stringify({ combos: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
     calls += 1;
     return new Response(
       JSON.stringify({
@@ -53,7 +44,7 @@ test('fetchModels caches successful responses', async () => {
   const first = await fetchModels(CONFIG, CONFIG.apiKey, false);
   const second = await fetchModels(CONFIG, CONFIG.apiKey, false);
 
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.equal(first[0].id, 'gpt-4.1-mini');
   assert.equal(second[0].id, 'gpt-4.1-mini');
   assert.ok(getCachedModels(CONFIG, CONFIG.apiKey));
@@ -63,16 +54,7 @@ test('fetchModels caches successful responses', async () => {
 test('refreshModels forces refetch', async () => {
   let calls = 0;
 
-  global.fetch = async (input) => {
-    const url = input instanceof Request ? input.url : String(input);
-    if (url.endsWith('/api/combos')) {
-      calls += 1;
-      return new Response(JSON.stringify({ combos: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
+  global.fetch = async () => {
     calls += 1;
     return new Response(
       JSON.stringify({
@@ -89,8 +71,8 @@ test('refreshModels forces refetch', async () => {
   await fetchModels(CONFIG, CONFIG.apiKey, false);
   const refreshed = await refreshModels(CONFIG, CONFIG.apiKey);
 
-  assert.equal(calls, 4);
-  assert.equal(refreshed[0].id, 'model-3');
+  assert.equal(calls, 2);
+  assert.equal(refreshed[0].id, 'model-2');
 });
 
 test('fetchModels falls back to defaults when response shape is invalid', async () => {
@@ -107,15 +89,7 @@ test('fetchModels falls back to defaults when response shape is invalid', async 
 });
 
 test('fetchModels maps OmniRoute token limit fields from /v1/models', async () => {
-  global.fetch = async (input) => {
-    const url = input instanceof Request ? input.url : String(input);
-    if (url.endsWith('/api/combos')) {
-      return new Response(JSON.stringify({ combos: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
+  global.fetch = async () => {
     return new Response(
       JSON.stringify({
         object: 'list',
@@ -153,4 +127,34 @@ test('fetchModels maps OmniRoute token limit fields from /v1/models', async () =
   assert.equal(model.supportsVision, true);
   assert.equal(model.supportsTools, true);
   assert.equal(model.reasoning, true);
+});
+
+test('fetchModels does not call /api/combos unless explicitly enabled', async () => {
+  let comboCalls = 0;
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/api/combos')) {
+      comboCalls += 1;
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        object: 'list',
+        data: [{ id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' }],
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
+  };
+
+  await fetchModels(CONFIG, CONFIG.apiKey, true);
+
+  assert.equal(comboCalls, 0);
 });

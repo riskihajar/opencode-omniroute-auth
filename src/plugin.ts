@@ -42,19 +42,52 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const existingProvider = providers[OMNIROUTE_PROVIDER_ID];
       const baseUrl = getBaseUrl(existingProvider?.options);
       const apiMode = getApiMode(existingProvider?.options);
+      const modelCacheTtl = getPositiveNumber(existingProvider?.options, 'modelCacheTtl');
+      const refreshOnList = getBoolean(existingProvider?.options, 'refreshOnList');
+      const enableCombos = getBoolean(existingProvider?.options, 'enableCombos');
+      const modelsDev = getModelsDevConfig(existingProvider?.options);
+      const enableFullGpt55Context = getBoolean(
+        existingProvider?.options,
+        'enableFullGpt55Context',
+      );
       const configuredModelMetadata = mergeModelMetadataConfigs(
         getModelMetadataConfig(existingProvider?.options),
         getProviderModelMetadataConfig(existingProvider?.models),
       );
       const providerNpm = resolveProviderNpm(existingProvider?.npm, apiMode);
       const providerUrl = getProviderUrl(baseUrl, apiMode);
+      const providerEnv = existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV;
+      let configuredModels = getConfigSeedModels(existingProvider?.models);
+      const envApiKey = getProviderApiKeyFromEnv(providerEnv);
+
+      if (envApiKey) {
+        try {
+          configuredModels = await fetchModels(
+            {
+              baseUrl,
+              apiKey: envApiKey,
+              apiMode,
+              modelCacheTtl,
+              refreshOnList,
+              enableCombos,
+              modelsDev,
+              modelMetadata: configuredModelMetadata,
+              enableFullGpt55Context,
+            },
+            envApiKey,
+            refreshOnList === true,
+          );
+        } catch (error) {
+          console.warn('[OmniRoute] Failed to eagerly hydrate models during config, using seeds:', error);
+        }
+      }
 
       providers[OMNIROUTE_PROVIDER_ID] = {
         ...existingProvider,
         name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
         api: providerUrl,
         npm: providerNpm,
-        env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
+        env: providerEnv,
         options: {
           ...(existingProvider?.options ?? {}),
           baseURL: baseUrl,
@@ -63,13 +96,18 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           modelMetadata: configuredModelMetadata,
         },
         models: toProviderModels(
-          getConfigSeedModels(existingProvider?.models),
+          configuredModels,
           baseUrl,
           {
             baseUrl,
-            apiKey: '',
+            apiKey: envApiKey ?? '',
             apiMode,
+            modelCacheTtl,
+            refreshOnList,
+            enableCombos,
+            modelsDev,
             modelMetadata: configuredModelMetadata,
+            enableFullGpt55Context,
           },
         ),
       };
@@ -177,6 +215,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   const baseUrl = getBaseUrl(provider.options);
   const modelCacheTtl = getPositiveNumber(provider.options, 'modelCacheTtl');
   const refreshOnList = getBoolean(provider.options, 'refreshOnList');
+  const enableCombos = getBoolean(provider.options, 'enableCombos');
   const enableFullGpt55Context = getBoolean(provider.options, 'enableFullGpt55Context');
   const modelsDev = getModelsDevConfig(provider.options);
   const modelMetadata = getModelMetadataConfig(provider.options);
@@ -187,6 +226,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
     apiMode: getApiMode(provider.options),
     modelCacheTtl,
     refreshOnList,
+    enableCombos,
     enableFullGpt55Context,
     modelsDev,
     modelMetadata,
@@ -218,6 +258,19 @@ function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
 
   console.warn(`[OmniRoute] Unsupported apiMode option: ${String(value)}. Using chat.`);
   return 'chat';
+}
+
+function getProviderApiKeyFromEnv(env: string[] | undefined): string | undefined {
+  for (const name of env ?? []) {
+    const value = process.env[name];
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return undefined;
 }
 
 function isApiMode(value: unknown): value is OmniRouteApiMode {
