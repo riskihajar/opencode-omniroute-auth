@@ -70,7 +70,7 @@ test('config hook applies defaults and normalized apiMode', async () => {
   assert.equal(config.provider.omniroute.api, 'http://localhost:20128/v1');
   assert.equal(config.provider.omniroute.options.apiMode, 'chat');
   assert.equal(config.provider.omniroute.options.baseURL, 'http://localhost:20128/v1');
-  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai-compatible');
   assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1');
 });
 
@@ -313,6 +313,7 @@ test('config hook clamps GPT-5.5 provider model config by default', async () => 
           baseURL: 'http://localhost:20128/v1',
           apiMode: 'responses',
         },
+        env: ['TEST_OMNIROUTE_API_KEY_DISABLED'],
         models: {
           'cx/gpt-5.5-xhigh': {
             name: 'GPT-5.5 XHigh',
@@ -450,6 +451,123 @@ test('loader can preserve advertised GPT-5.5 routed 1M window when explicitly en
   assert.deepEqual(provider.models['codex/gpt-5.5'].limit, {
     context: 1050000,
     input: 1050000,
+    output: 128000,
+  });
+});
+
+test('loader preserves GPT-5.5 full context when enabled through model metadata', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'cx/gpt-5.5-xhigh',
+            context_length: 1050000,
+            max_input_tokens: 1050000,
+            max_output_tokens: 128000,
+            capabilities: {
+              vision: true,
+              tool_calling: true,
+              reasoning: true,
+            },
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'responses',
+      modelMetadata: {
+        'cx/gpt-5.5-xhigh': {
+          enableFullGpt55Context: true,
+        },
+      },
+    },
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.deepEqual(provider.models['cx/gpt-5.5-xhigh'].limit, {
+    context: 1050000,
+    input: 1050000,
+    output: 128000,
+  });
+});
+
+test('loader clamps prefixed GPT-5.5 routed limits by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'omniroute/cx/gpt-5.5-xhigh',
+            context_length: 1050000,
+            max_input_tokens: 1050000,
+            max_output_tokens: 128000,
+            capabilities: {
+              vision: true,
+              tool_calling: true,
+              reasoning: true,
+            },
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'responses',
+    },
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.deepEqual(provider.models['omniroute/cx/gpt-5.5-xhigh'].limit, {
+    context: 400000,
+    input: 272000,
     output: 128000,
   });
 });
@@ -798,7 +916,7 @@ test('responses mode falls back anthropic-family models to chat provider runtime
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai-compatible');
   assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.url, 'http://localhost:20128/v1');
 });
 
@@ -832,7 +950,7 @@ test('responses mode falls back antigravity gemini models to chat provider runti
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm, '@ai-sdk/openai-compatible');
 });
 
 test('responses mode falls back mlx qwen models to chat provider runtime', async () => {
@@ -866,7 +984,7 @@ test('responses mode falls back mlx qwen models to chat provider runtime', async
 
   assert.equal(
     config.provider.omniroute.models['mlx/mlx-community/Qwen3.5-4B-MLX-8bit'].api.npm,
-    '@ai-sdk/openai',
+    '@ai-sdk/openai-compatible',
   );
 });
 
@@ -906,7 +1024,83 @@ test('per-model apiMode override forces chat runtime even when global mode is re
   await plugin.config(config);
 
   assert.equal(config.provider.omniroute.options.modelMetadata['minimax/minimax-m1'].apiMode, 'chat');
-  assert.equal(config.provider.omniroute.models['minimax/minimax-m1'].api.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['minimax/minimax-m1'].api.npm, '@ai-sdk/openai-compatible');
+});
+
+test('modelMetadata apiMode override applies to seeded models without inline apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+          modelMetadata: {
+            'kimi-coding/kimi-k2.6': {
+              apiMode: 'chat',
+            },
+          },
+        },
+        models: {
+          'kimi-coding/kimi-k2.6': {
+            name: 'Kimi K2.6',
+            capabilities: {
+              reasoning: false,
+              toolcall: true,
+              attachment: false,
+            },
+            limit: {
+              context: 32768,
+              output: 8192,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.models['kimi-coding/kimi-k2.6'].api.npm, '@ai-sdk/openai-compatible');
+});
+
+test('seeded GPT-5.5 model can opt into full context per model', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        env: ['TEST_OMNIROUTE_API_KEY_DISABLED'],
+        models: {
+          'cx/gpt-5.5-xhigh': {
+            name: 'GPT-5.5 XHigh',
+            enableFullGpt55Context: true,
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 1050000,
+              input: 1050000,
+              output: 128000,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.deepEqual(config.provider.omniroute.models['cx/gpt-5.5-xhigh'].limit, {
+    context: 1050000,
+    input: 1050000,
+    output: 128000,
+  });
 });
 
 test('per-model apiMode override can keep anthropic-family model on responses runtime', async () => {

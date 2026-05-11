@@ -33,11 +33,11 @@ function applyRuntimeLimitOverrides(
   model: OmniRouteModel,
   config: OmniRouteConfig,
 ): OmniRouteModel {
-  if (config.enableFullGpt55Context === true) {
+  if (config.enableFullGpt55Context === true || model.enableFullGpt55Context === true) {
     return model;
   }
 
-  if (!/^(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(model.id)) {
+  if (!/(^|\/)(codex|cx)\/gpt-5\.5(?:$|[-/])/.test(model.id)) {
     return model;
   }
 
@@ -153,7 +153,7 @@ export async function fetchModels(
           ? record.input_modalities.filter((value): value is string => typeof value === 'string')
           : [];
 
-        return applyRuntimeLimitOverrides({
+        return {
           ...model,
         // Ensure required fields
           id: model.id,
@@ -173,7 +173,8 @@ export async function fetchModels(
           supportsTools:
             model.supportsTools ?? getModelCapability(record.capabilities, 'tool_calling'),
           reasoning: model.reasoning ?? getModelCapability(record.capabilities, 'reasoning'),
-        }, config);
+          enableFullGpt55Context: config.enableFullGpt55Context === true,
+        };
       });
 
     // Enrich with models.dev and combo capabilities. Apply runtime limit
@@ -547,6 +548,9 @@ function mergeModelMetadata(model: OmniRouteModel, metadata: OmniRouteModelMetad
     ...(metadata.contextWindow !== undefined ? { contextWindow: metadata.contextWindow } : {}),
     ...(metadata.maxInputTokens !== undefined ? { maxInputTokens: metadata.maxInputTokens } : {}),
     ...(metadata.maxTokens !== undefined ? { maxTokens: metadata.maxTokens } : {}),
+    ...(metadata.enableFullGpt55Context !== undefined
+      ? { enableFullGpt55Context: metadata.enableFullGpt55Context }
+      : {}),
     ...(metadata.supportsStreaming !== undefined ? { supportsStreaming: metadata.supportsStreaming } : {}),
     ...(metadata.supportsVision !== undefined ? { supportsVision: metadata.supportsVision } : {}),
     ...(metadata.supportsTools !== undefined ? { supportsTools: metadata.supportsTools } : {}),

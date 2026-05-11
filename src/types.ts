@@ -21,6 +21,8 @@ export interface OmniRouteModel {
   resetEmbeddedReasoningVariant?: boolean;
   /** Optional OpenCode variant definitions for this model */
   variants?: Record<string, unknown>;
+  /** Trust OmniRoute's advertised 1M GPT-5.5 routed window instead of clamping to a Plus-tier budget */
+  enableFullGpt55Context?: boolean;
   pricing?: {
     input?: number;
     output?: number;
@@ -44,6 +46,8 @@ export interface OmniRouteModelMetadata {
   resetEmbeddedReasoningVariant?: boolean;
   /** Optional explicit variant map exposed to OpenCode */
   variants?: Record<string, unknown>;
+  /** Trust OmniRoute's advertised 1M GPT-5.5 routed window instead of clamping to a Plus-tier budget */
+  enableFullGpt55Context?: boolean;
   pricing?: {
     input?: number;
     output?: number;
