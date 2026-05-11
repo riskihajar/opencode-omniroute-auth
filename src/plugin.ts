@@ -1,4 +1,7 @@
 import type { Plugin, Hooks } from '@opencode-ai/plugin';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type {
   OmniRouteApiMode,
   OmniRouteConfig,
@@ -274,10 +277,10 @@ function getProviderApiKeyFromEnv(env: string[] | undefined): string | undefined
 }
 
 async function getProviderApiKey(
-  input: Parameters<Plugin>[0],
+  _input: Parameters<Plugin>[0],
   env: string[] | undefined,
 ): Promise<string | undefined> {
-  const stored = await getProviderApiKeyFromOpencode(input);
+  const stored = await getProviderApiKeyFromLocalAuth();
   if (stored) {
     return stored;
   }
@@ -285,43 +288,39 @@ async function getProviderApiKey(
   return getProviderApiKeyFromEnv(env);
 }
 
-async function getProviderApiKeyFromOpencode(
-  input: Parameters<Plugin>[0],
-): Promise<string | undefined> {
-  const client = input?.client;
-  if (!isRecord(client) || !isRecord(client.config)) {
-    return undefined;
-  }
-
-  const providers = client.config.providers;
-  if (typeof providers !== 'function') {
-    return undefined;
-  }
-
+async function getProviderApiKeyFromLocalAuth(): Promise<string | undefined> {
   try {
-    const result = await providers({
-      responseStyle: 'data',
-      throwOnError: true,
-    });
-
-    if (!isRecord(result) || !Array.isArray(result.providers)) {
+    const raw = await readFile(getOpencodeAuthFilePath(), 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
       return undefined;
     }
 
-    const provider = result.providers.find(
-      (item): item is Record<string, unknown> =>
-        isRecord(item) && item.id === OMNIROUTE_PROVIDER_ID,
-    );
-    if (!provider) {
+    const provider = parsed[OMNIROUTE_PROVIDER_ID];
+    if (!isRecord(provider) || provider.type !== 'api') {
       return undefined;
     }
 
     const key = provider.key;
     return typeof key === 'string' && key.trim() !== '' ? key.trim() : undefined;
   } catch (error) {
-    console.warn('[OmniRoute] Failed to read stored provider auth during config bootstrap:', error);
+    debugLog('[OmniRoute] Failed to read local provider auth during config bootstrap:', error);
     return undefined;
   }
+}
+
+function getOpencodeAuthFilePath(): string {
+  const overridden = process.env.OPENCODE_AUTH_PATH;
+  if (typeof overridden === 'string' && overridden.trim() !== '') {
+    return overridden.trim();
+  }
+
+  const dataHome = process.env.XDG_DATA_HOME;
+  if (typeof dataHome === 'string' && dataHome.trim() !== '') {
+    return join(dataHome, 'opencode', 'auth.json');
+  }
+
+  return join(homedir(), '.local', 'share', 'opencode', 'auth.json');
 }
 
 function isApiMode(value: unknown): value is OmniRouteApiMode {

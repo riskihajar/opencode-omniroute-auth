@@ -1,5 +1,8 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import OmniRouteAuthPlugin from '../dist/index.js';
 import { clearModelCache, clearModelsDevCache, fetchModels } from '../dist/runtime.js';
@@ -32,6 +35,7 @@ afterEach(() => {
   clearModelCache();
   clearModelsDevCache();
   global.fetch = ORIGINAL_FETCH;
+  delete process.env.OPENCODE_AUTH_PATH;
 });
 
 function createModelsResponse() {
@@ -47,6 +51,7 @@ function createModelsResponse() {
 }
 
 test('config hook applies defaults and normalized apiMode', async () => {
+  process.env.OPENCODE_AUTH_PATH = join(tmpdir(), 'missing-opencode-auth.json');
   const plugin = await OmniRouteAuthPlugin({});
   const config = {
     provider: {
@@ -70,6 +75,7 @@ test('config hook applies defaults and normalized apiMode', async () => {
 });
 
 test('config hook switches provider package and URL for responses mode', async () => {
+  process.env.OPENCODE_AUTH_PATH = join(tmpdir(), 'missing-opencode-auth.json');
   const plugin = await OmniRouteAuthPlugin({});
   const config = {
     provider: {
@@ -184,23 +190,19 @@ test('config hook eagerly hydrates OmniRoute models when API key env is availabl
 test('config hook eagerly hydrates OmniRoute models using stored OpenCode auth without env', async () => {
   const previousApiKey = process.env.OMNIROUTE_API_KEY;
   delete process.env.OMNIROUTE_API_KEY;
-
-  const plugin = await OmniRouteAuthPlugin({
-    client: {
-      config: {
-        providers: async () => ({
-          providers: [
-            {
-              id: 'omniroute',
-              source: 'api',
-              key: 'stored-secret-key',
-            },
-          ],
-          default: {},
-        }),
+  const tempDir = await mkdtemp(join(tmpdir(), 'opencode-auth-'));
+  process.env.OPENCODE_AUTH_PATH = join(tempDir, 'auth.json');
+  await writeFile(
+    process.env.OPENCODE_AUTH_PATH,
+    JSON.stringify({
+      omniroute: {
+        type: 'api',
+        key: 'stored-secret-key',
       },
-    },
-  });
+    }),
+  );
+
+  const plugin = await OmniRouteAuthPlugin({});
 
   try {
     global.fetch = async (input) => {
@@ -248,6 +250,52 @@ test('config hook eagerly hydrates OmniRoute models using stored OpenCode auth w
 
     assert.equal(config.provider.omniroute.models['glm/glm-5.1'].limit.context, 131072);
   } finally {
+    await rm(tempDir, { recursive: true, force: true });
+    if (previousApiKey === undefined) {
+      delete process.env.OMNIROUTE_API_KEY;
+    } else {
+      process.env.OMNIROUTE_API_KEY = previousApiKey;
+    }
+  }
+});
+
+test('config hook reads OpenCode auth path override without requiring SDK provider calls', async () => {
+  const previousApiKey = process.env.OMNIROUTE_API_KEY;
+  delete process.env.OMNIROUTE_API_KEY;
+  const tempDir = await mkdtemp(join(tmpdir(), 'opencode-auth-'));
+  process.env.OPENCODE_AUTH_PATH = join(tempDir, 'auth.json');
+  await writeFile(
+    process.env.OPENCODE_AUTH_PATH,
+    JSON.stringify({
+      omniroute: {
+        type: 'api',
+        key: 'stored-secret-key',
+      },
+    }),
+  );
+
+  const plugin = await OmniRouteAuthPlugin({});
+
+  try {
+    global.fetch = createEmptyOmniRouteFetch();
+
+    const config = {
+      provider: {
+        omniroute: {
+          env: ['TEST_OMNIROUTE_API_KEY_DISABLED'],
+          options: {
+            baseURL: 'http://localhost:20128/v1',
+            apiMode: 'responses',
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+
+    assert.ok(config.provider.omniroute.models);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
     if (previousApiKey === undefined) {
       delete process.env.OMNIROUTE_API_KEY;
     } else {
