@@ -181,6 +181,81 @@ test('config hook eagerly hydrates OmniRoute models when API key env is availabl
   }
 });
 
+test('config hook eagerly hydrates OmniRoute models using stored OpenCode auth without env', async () => {
+  const previousApiKey = process.env.OMNIROUTE_API_KEY;
+  delete process.env.OMNIROUTE_API_KEY;
+
+  const plugin = await OmniRouteAuthPlugin({
+    client: {
+      config: {
+        providers: async () => ({
+          providers: [
+            {
+              id: 'omniroute',
+              source: 'api',
+              key: 'stored-secret-key',
+            },
+          ],
+          default: {},
+        }),
+      },
+    },
+  });
+
+  try {
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'glm/glm-5.1',
+              context_length: 131072,
+              max_output_tokens: 16384,
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url === 'https://models.dev/api.json') {
+        return new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const config = {
+      provider: {
+        omniroute: {
+          env: ['TEST_OMNIROUTE_API_KEY_DISABLED'],
+          options: {
+            baseURL: 'http://localhost:20128/v1',
+            apiMode: 'responses',
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+
+    assert.equal(config.provider.omniroute.models['glm/glm-5.1'].limit.context, 131072);
+  } finally {
+    if (previousApiKey === undefined) {
+      delete process.env.OMNIROUTE_API_KEY;
+    } else {
+      process.env.OMNIROUTE_API_KEY = previousApiKey;
+    }
+  }
+});
+
 test('config hook clamps GPT-5.5 provider model config by default', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const config = {

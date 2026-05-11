@@ -58,14 +58,14 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const providerUrl = getProviderUrl(baseUrl, apiMode);
       const providerEnv = existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV;
       let configuredModels = getConfigSeedModels(existingProvider?.models);
-      const envApiKey = getProviderApiKeyFromEnv(providerEnv);
+      const providerApiKey = await getProviderApiKey(_input, providerEnv);
 
-      if (envApiKey) {
+      if (providerApiKey) {
         try {
           configuredModels = await fetchModels(
             {
               baseUrl,
-              apiKey: envApiKey,
+              apiKey: providerApiKey,
               apiMode,
               modelCacheTtl,
               refreshOnList,
@@ -74,7 +74,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
               modelMetadata: configuredModelMetadata,
               enableFullGpt55Context,
             },
-            envApiKey,
+            providerApiKey,
             refreshOnList === true,
           );
         } catch (error) {
@@ -100,7 +100,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           baseUrl,
           {
             baseUrl,
-            apiKey: envApiKey ?? '',
+            apiKey: providerApiKey ?? '',
             apiMode,
             modelCacheTtl,
             refreshOnList,
@@ -271,6 +271,57 @@ function getProviderApiKeyFromEnv(env: string[] | undefined): string | undefined
   }
 
   return undefined;
+}
+
+async function getProviderApiKey(
+  input: Parameters<Plugin>[0],
+  env: string[] | undefined,
+): Promise<string | undefined> {
+  const stored = await getProviderApiKeyFromOpencode(input);
+  if (stored) {
+    return stored;
+  }
+
+  return getProviderApiKeyFromEnv(env);
+}
+
+async function getProviderApiKeyFromOpencode(
+  input: Parameters<Plugin>[0],
+): Promise<string | undefined> {
+  const client = input?.client;
+  if (!isRecord(client) || !isRecord(client.config)) {
+    return undefined;
+  }
+
+  const providers = client.config.providers;
+  if (typeof providers !== 'function') {
+    return undefined;
+  }
+
+  try {
+    const result = await providers({
+      responseStyle: 'data',
+      throwOnError: true,
+    });
+
+    if (!isRecord(result) || !Array.isArray(result.providers)) {
+      return undefined;
+    }
+
+    const provider = result.providers.find(
+      (item): item is Record<string, unknown> =>
+        isRecord(item) && item.id === OMNIROUTE_PROVIDER_ID,
+    );
+    if (!provider) {
+      return undefined;
+    }
+
+    const key = provider.key;
+    return typeof key === 'string' && key.trim() !== '' ? key.trim() : undefined;
+  } catch (error) {
+    console.warn('[OmniRoute] Failed to read stored provider auth during config bootstrap:', error);
+    return undefined;
+  }
 }
 
 function isApiMode(value: unknown): value is OmniRouteApiMode {
