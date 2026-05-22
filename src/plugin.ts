@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
+  OmniRouteAnthropicToolChoicePolicy,
   OmniRouteApiMode,
   OmniRouteConfig,
   OmniRouteModel,
@@ -22,6 +23,20 @@ import { fetchModels } from './models.js';
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai';
 const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/openai';
+const OMNIROUTE_ANTHROPIC_PROVIDER_NPM = '@ai-sdk/anthropic';
+const OMNIROUTE_ANTHROPIC_BETA_HEADER =
+  'claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14';
+const DEFAULT_ANTHROPIC_TOOL_CHOICE: OmniRouteAnthropicToolChoicePolicy = 'composer-any';
+const ANTHROPIC_STREAM_EVENT_TYPES = new Set([
+  'message_start',
+  'message_delta',
+  'message_stop',
+  'content_block_start',
+  'content_block_delta',
+  'content_block_stop',
+  'ping',
+  'error',
+]);
 const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
 const DEBUG = process.env.OMNIROUTE_PLUGIN_DEBUG === '1';
 
@@ -37,6 +52,22 @@ type AuthAccessor = Parameters<AuthLoader>[0];
 type ProviderDefinition = Parameters<AuthLoader>[1];
 type ChatHeadersHook = NonNullable<Hooks['chat.headers']>;
 type ChatParamsHook = NonNullable<Hooks['chat.params']>;
+
+interface ChatMessageHookInput {
+  model?: {
+    providerID: string;
+    modelID: string;
+  };
+}
+
+interface ChatMessageHookOutput {
+  parts: unknown[];
+}
+
+type ChatMessageHook = (
+  input: ChatMessageHookInput,
+  output: ChatMessageHookOutput,
+) => Promise<void>;
 
 export const OmniRouteAuthPlugin: Plugin = async (_input) => {
   return {
@@ -118,6 +149,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       config.provider = providers;
     },
     auth: createAuthHook(),
+    'chat.message': createChatMessageHook(),
     'chat.headers': createChatHeadersHook(),
     'chat.params': createChatParamsHook(),
   };
@@ -152,15 +184,84 @@ function createChatHeadersHook(): ChatHeadersHook {
   };
 }
 
+function createChatMessageHook(): ChatMessageHook {
+  return async (
+    _input: ChatMessageHookInput,
+    output: ChatMessageHookOutput,
+  ): Promise<void> => {
+    if (_input.model?.providerID !== OMNIROUTE_PROVIDER_ID) {
+      return;
+    }
+
+    const rawAgentPart = output.parts.find(
+      (part) => isRecord(part) && part.type === 'agent' && typeof part.name === 'string',
+    );
+    if (!isRecord(rawAgentPart)) {
+      return;
+    }
+    const agentPart: Record<string, unknown> = rawAgentPart;
+    if (!agentPart || typeof agentPart.name !== 'string') {
+      return;
+    }
+
+    const agentName = agentPart.name;
+    const prompt = getSubagentPromptFromParts(output.parts, agentName);
+    delete agentPart.name;
+    delete agentPart.source;
+    agentPart.type = 'subtask';
+    agentPart.agent = agentName;
+    agentPart.description = getSubagentDescription(agentName);
+    agentPart.prompt = prompt;
+
+    for (let index = output.parts.length - 1; index >= 0; index -= 1) {
+      const part = output.parts[index];
+      if (
+        isRecord(part) &&
+        part.type === 'text' &&
+        part.synthetic === true &&
+        typeof part.text === 'string' &&
+        OPENCODE_SUBAGENT_PROMPT_RE.test(part.text)
+      ) {
+        output.parts.splice(index, 1);
+      }
+    }
+
+    debugLog(`[OmniRoute] Converted @${agentName} agent mention to direct subtask`);
+  };
+}
+
+function getSubagentPromptFromParts(parts: unknown[], agentName: string): string {
+  const text = parts
+    .filter((part) => isRecord(part) && part.type === 'text' && part.synthetic !== true)
+    .flatMap((part) => collectTextContent(part))
+    .join('\n')
+    .replace(new RegExp(`@${escapeRegExp(agentName)}\\b`, 'gi'), '')
+    .trim();
+
+  if (text) {
+    return text;
+  }
+
+  return `Use the ${agentName} agent to inspect the current project and report the relevant findings.`;
+}
+
+function getSubagentDescription(agentName: string): string {
+  return `${agentName} task`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function createChatParamsHook(): ChatParamsHook {
   return (_input, output) => {
     if (_input.model.providerID !== OMNIROUTE_PROVIDER_ID) {
       return output;
     }
 
-    const apiMode = getApiMode(_input.provider.options);
     const shouldMatchOpenAiCodexParams =
-      apiMode === 'responses' || isOpenAiCodexLikeModel(_input.model.api.id);
+      _input.model.api.npm === OMNIROUTE_RESPONSES_PROVIDER_NPM &&
+      isOpenAiCodexLikeModel(_input.model.api.id);
 
     if (!shouldMatchOpenAiCodexParams) {
       return output;
@@ -227,6 +328,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
     baseUrl,
     apiKey,
     apiMode: getApiMode(provider.options),
+    anthropicToolChoice: getAnthropicToolChoicePolicy(provider.options),
     modelCacheTtl,
     refreshOnList,
     enableCombos,
@@ -261,6 +363,25 @@ function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
 
   console.warn(`[OmniRoute] Unsupported apiMode option: ${String(value)}. Using chat.`);
   return 'chat';
+}
+
+function getAnthropicToolChoicePolicy(
+  options?: Record<string, unknown>,
+): OmniRouteAnthropicToolChoicePolicy {
+  const value = options?.anthropicToolChoice;
+  if (value === undefined) {
+    return DEFAULT_ANTHROPIC_TOOL_CHOICE;
+  }
+
+  if (value === 'auto' || value === 'composer-any' || value === 'any') {
+    return value;
+  }
+
+  console.warn(
+    `[OmniRoute] Unsupported anthropicToolChoice option: ${String(value)}. ` +
+      `Using ${DEFAULT_ANTHROPIC_TOOL_CHOICE}.`,
+  );
+  return DEFAULT_ANTHROPIC_TOOL_CHOICE;
 }
 
 function getProviderApiKeyFromEnv(env: string[] | undefined): string | undefined {
@@ -324,10 +445,14 @@ function getOpencodeAuthFilePath(): string {
 }
 
 function isApiMode(value: unknown): value is OmniRouteApiMode {
-  return value === 'chat' || value === 'responses';
+  return value === 'chat' || value === 'responses' || value === 'anthropic';
 }
 
 function getProviderNpm(apiMode: OmniRouteApiMode): string {
+  if (apiMode === 'anthropic') {
+    return OMNIROUTE_ANTHROPIC_PROVIDER_NPM;
+  }
+
   return apiMode === 'responses'
     ? OMNIROUTE_RESPONSES_PROVIDER_NPM
     : OMNIROUTE_CHAT_PROVIDER_NPM;
@@ -341,11 +466,47 @@ function getEffectiveApiModeForModel(
     return model.apiMode;
   }
 
+  if (usesAnthropicMessagesRuntime(model.id, model.root, model.owned_by)) {
+    return 'anthropic';
+  }
+
   if (requestedApiMode !== 'responses') {
     return requestedApiMode;
   }
 
   return supportsResponsesApiStreaming(model.id) ? 'responses' : 'chat';
+}
+
+function isAnthropicFamilyModel(modelId: string, root?: string, ownedBy?: string): boolean {
+  const candidates = [modelId, root, ownedBy]
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => stripModelRuntimeSuffixes(value.toLowerCase()));
+
+  return candidates.some(
+    (value) =>
+      value.includes('anthropic') ||
+      value.includes('claude') ||
+      value.includes('opus') ||
+      value.includes('sonnet') ||
+      value.includes('haiku'),
+  );
+}
+
+function usesAnthropicMessagesRuntime(modelId: string, root?: string, ownedBy?: string): boolean {
+  return isAnthropicFamilyModel(modelId, root, ownedBy) || isCursorComposerModel(modelId, root);
+}
+
+function isCursorComposerModel(modelId: string, root?: string): boolean {
+  const candidates = [modelId, root]
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => stripModelRuntimeSuffixes(value.toLowerCase()));
+
+  return candidates.some(
+    (value) =>
+      value === 'cu/composer-2.5' ||
+      value === 'cursor/composer-2.5' ||
+      value.endsWith('/composer-2.5'),
+  );
 }
 
 function supportsResponsesApiStreaming(modelId: string): boolean {
@@ -366,7 +527,8 @@ function supportsResponsesApiStreaming(modelId: string): boolean {
     baseModelId.includes('opus') ||
     baseModelId.includes('sonnet') ||
     baseModelId.includes('haiku') ||
-    baseModelId.includes('gemini')
+    baseModelId.includes('gemini') ||
+    isCursorComposerModel(baseModelId)
   ) {
     return false;
   }
@@ -531,11 +693,11 @@ function getProviderModelMetadataConfig(
       next.resetEmbeddedReasoningVariant = true;
     }
 
-    if (raw.api === 'chat' || raw.api === 'responses') {
+    if (isApiMode(raw.api)) {
       next.apiMode = raw.api;
     }
 
-    if (raw.apiMode === 'chat' || raw.apiMode === 'responses') {
+    if (isApiMode(raw.apiMode)) {
       next.apiMode = raw.apiMode;
     }
 
@@ -657,9 +819,9 @@ function getConfigSeedModels(models: unknown): OmniRouteModel[] {
       supportsTools:
         typeof capabilities?.toolcall === 'boolean' ? capabilities.toolcall : undefined,
       apiMode:
-        metadata.api === 'chat' || metadata.api === 'responses'
+        isApiMode(metadata.api)
           ? metadata.api
-          : metadata.apiMode === 'chat' || metadata.apiMode === 'responses'
+          : isApiMode(metadata.apiMode)
             ? metadata.apiMode
             : undefined,
       reasoning:
@@ -718,9 +880,19 @@ function toProviderModel(
   const supportsTools = typeof supportsToolsOverride === 'boolean'
     ? supportsToolsOverride
     : model.supportsTools !== false;
-  const reasoning = embeddedVariant ? false : getReasoningSupport(effectiveModel, config);
+  const reasoning = getProviderModelReasoningSupport(
+    effectiveModel,
+    apiMode,
+    embeddedVariant,
+    config,
+  );
   const variants = getVariants(effectiveModel, reasoning, apiMode);
-  const options = embeddedVariant ? getReasoningVariantOptions(embeddedVariant, apiMode) : {};
+  const providerUrl = getProviderUrl(baseUrl, apiMode);
+  const providerNpm = getProviderNpm(apiMode);
+  const options =
+    embeddedVariant && apiMode !== 'anthropic'
+      ? getReasoningVariantOptions(embeddedVariant, apiMode)
+      : {};
 
   return {
     id: model.id,
@@ -730,8 +902,12 @@ function toProviderModel(
     release_date: '',
     api: {
       id: model.id,
-      url: getProviderUrl(baseUrl, apiMode),
-      npm: getProviderNpm(apiMode),
+      url: providerUrl,
+      npm: providerNpm,
+    },
+    provider: {
+      api: providerUrl,
+      npm: providerNpm,
     },
     modalities: {
       input: supportsVision ? ['text', 'image'] : ['text'],
@@ -793,6 +969,24 @@ function getReasoningSupport(model: OmniRouteModel, config?: OmniRouteConfig): b
   return /(^|\/)(gpt-5|o3|o4)|codex\/gpt-5|cx\/gpt-5/.test(modelId);
 }
 
+function getProviderModelReasoningSupport(
+  model: OmniRouteModel,
+  apiMode: OmniRouteApiMode,
+  embeddedVariant: string | undefined,
+  config?: OmniRouteConfig,
+): boolean {
+  if (embeddedVariant) {
+    return false;
+  }
+
+  const configured = getConfiguredModelMetadata(model.id, config);
+  if (typeof configured?.reasoning === 'boolean') {
+    return configured.reasoning;
+  }
+
+  return getReasoningSupport(model, config);
+}
+
 function supportsWidelySupportedReasoningEfforts(modelId: string): boolean {
   return /(^|[-_/])(gpt-5\.5|gpt-5\.4|gpt-5\.3-codex|gpt-5\.2-codex)(?:$|[-_/])/.test(
     modelId.toLowerCase(),
@@ -821,16 +1015,19 @@ function getVariants(
   const generatedEfforts = supportsXHighReasoningEffort(model.id)
     ? (['low', 'medium', 'high', 'xhigh'] as const)
     : (['low', 'medium', 'high'] as const);
+  const shouldGenerateReasoningVariants =
+    apiMode !== 'anthropic' &&
+    (reasoning || supportsWidelySupportedEfforts) &&
+    !hasEmbeddedReasoningVariant(model);
 
-  const generated = (!reasoning && !supportsWidelySupportedEfforts)
-    || hasEmbeddedReasoningVariant(model)
-    ? {}
-    : Object.fromEntries(
+  const generated = shouldGenerateReasoningVariants
+    ? Object.fromEntries(
         generatedEfforts.map((effort) => [
           effort,
           getReasoningVariantOptions(effort, apiMode, model.id),
         ]),
-      );
+      )
+    : {};
 
   if (model.variants && Object.keys(model.variants).length > 0) {
     return {
@@ -1016,11 +1213,22 @@ function createFetchInterceptor(
     }
 
     headers.set('Authorization', `Bearer ${config.apiKey}`);
+    if (url.includes('/messages')) {
+      headers.set('x-api-key', config.apiKey);
+      if (!headers.has('anthropic-beta')) {
+        headers.set('anthropic-beta', OMNIROUTE_ANTHROPIC_BETA_HEADER);
+      }
+    }
     headers.set('Content-Type', 'application/json');
 
-    const transformedBody = await transformRequestBody(input, init, url);
-    if (DEBUG && transformedBody !== undefined && url.includes('/chat/completions')) {
-      debugLog(`[OmniRoute] Final chat payload ${transformedBody}`);
+    const transformedBody = await transformRequestBody(input, init, url, config);
+    if (DEBUG && transformedBody !== undefined) {
+      if (url.includes('/chat/completions')) {
+        debugLog(`[OmniRoute] Final chat payload ${transformedBody}`);
+      }
+      if (url.includes('/messages')) {
+        debugLog(`[OmniRoute] Final messages payload ${sanitizeDebugPayload(transformedBody)}`);
+      }
     }
 
     // Clone init to avoid mutating original
@@ -1038,8 +1246,232 @@ function createFetchInterceptor(
       debugLog('[OmniRoute] Processing /v1/models response');
     }
 
-    return response;
+    return sanitizeAnthropicMessagesResponse(url, response);
   };
+}
+
+interface SseEventChunk {
+  event: string | undefined;
+  data: string[];
+  lines: string[];
+}
+
+function sanitizeAnthropicMessagesResponse(url: string, response: Response): Response {
+  if (!url.includes('/messages') || !response.body) {
+    return response;
+  }
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (!contentType.includes('text/event-stream')) {
+    return response;
+  }
+
+  return new Response(createAnthropicSseSanitizer(response.body), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+function createAnthropicSseSanitizer(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const reader = body.getReader();
+  const state: SseEventChunk = { event: undefined, data: [], lines: [] };
+  let buffer = '';
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      try {
+        while (true) {
+          const emitted = flushBufferedSseLines(controller, state, false, () => buffer, (next) => {
+            buffer = next;
+          }, encoder);
+          if (emitted) {
+            return;
+          }
+
+          const { value, done } = await reader.read();
+          if (done) {
+            buffer += decoder.decode();
+            flushBufferedSseLines(controller, state, true, () => buffer, (next) => {
+              buffer = next;
+            }, encoder);
+            controller.close();
+            return;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+        }
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason): void {
+      void reader.cancel(reason);
+    },
+  });
+}
+
+function flushBufferedSseLines(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  state: SseEventChunk,
+  isFinal: boolean,
+  getBuffer: () => string,
+  setBuffer: (value: string) => void,
+  encoder: TextEncoder,
+): boolean {
+  let emitted = false;
+  let buffer = getBuffer();
+  let line = consumeSseLine(buffer);
+
+  while (line) {
+    buffer = line.rest;
+    const eventText = ingestSseLine(state, line.value);
+    if (eventText !== undefined) {
+      if (shouldForwardAnthropicSseEvent(eventText.event, eventText.data)) {
+        controller.enqueue(encoder.encode(eventText.raw));
+        emitted = true;
+      } else {
+        debugLog(`[OmniRoute] Dropped invalid Anthropic SSE event ${eventText.event ?? '(none)'}`);
+      }
+    }
+    line = consumeSseLine(buffer);
+  }
+
+  setBuffer(buffer);
+
+  if (isFinal) {
+    if (buffer.length > 0) {
+      const eventText = ingestSseLine(state, buffer);
+      setBuffer('');
+      if (eventText !== undefined && shouldForwardAnthropicSseEvent(eventText.event, eventText.data)) {
+        controller.enqueue(encoder.encode(eventText.raw));
+        emitted = true;
+      }
+    }
+
+    const trailingEvent = flushSseEventChunk(state);
+    if (trailingEvent !== undefined && shouldForwardAnthropicSseEvent(trailingEvent.event, trailingEvent.data)) {
+      controller.enqueue(encoder.encode(trailingEvent.raw));
+      emitted = true;
+    }
+  }
+
+  return emitted;
+}
+
+function consumeSseLine(text: string): { value: string; rest: string } | undefined {
+  const carriageReturnIndex = text.indexOf('\r');
+  const newlineIndex = text.indexOf('\n');
+  let lineBreakIndex: number;
+
+  if (carriageReturnIndex === -1) {
+    lineBreakIndex = newlineIndex;
+  } else if (newlineIndex === -1) {
+    lineBreakIndex = carriageReturnIndex;
+  } else {
+    lineBreakIndex = Math.min(carriageReturnIndex, newlineIndex);
+  }
+
+  if (lineBreakIndex === -1) {
+    return undefined;
+  }
+
+  let nextIndex = lineBreakIndex + 1;
+  if (text[lineBreakIndex] === '\r' && text[nextIndex] === '\n') {
+    nextIndex += 1;
+  }
+
+  return {
+    value: text.slice(0, lineBreakIndex),
+    rest: text.slice(nextIndex),
+  };
+}
+
+function ingestSseLine(
+  state: SseEventChunk,
+  line: string,
+): { event: string | undefined; data: string; raw: string } | undefined {
+  if (line === '') {
+    return flushSseEventChunk(state);
+  }
+
+  state.lines.push(line);
+  if (line.startsWith(':')) {
+    return undefined;
+  }
+
+  const delimiterIndex = line.indexOf(':');
+  const fieldName = delimiterIndex === -1 ? line : line.slice(0, delimiterIndex);
+  let value = delimiterIndex === -1 ? '' : line.slice(delimiterIndex + 1);
+  if (value.startsWith(' ')) {
+    value = value.slice(1);
+  }
+
+  if (fieldName === 'event') {
+    state.event = value;
+  } else if (fieldName === 'data') {
+    state.data.push(value);
+  }
+
+  return undefined;
+}
+
+function flushSseEventChunk(
+  state: SseEventChunk,
+): { event: string | undefined; data: string; raw: string } | undefined {
+  if (!state.event && state.data.length === 0 && state.lines.length === 0) {
+    return undefined;
+  }
+
+  const event = {
+    event: state.event,
+    data: state.data.join('\n'),
+    raw: `${state.lines.join('\n')}\n\n`,
+  };
+  state.event = undefined;
+  state.data = [];
+  state.lines = [];
+  return event;
+}
+
+function shouldForwardAnthropicSseEvent(eventName: string | undefined, data: string): boolean {
+  if (eventName === 'error') {
+    return true;
+  }
+
+  if (data.trim() === '[DONE]') {
+    return true;
+  }
+
+  const parsed = parseJsonObject(data);
+  if (!parsed) {
+    return true;
+  }
+
+  if (typeof parsed.type !== 'string') {
+    return false;
+  }
+
+  if (!ANTHROPIC_STREAM_EVENT_TYPES.has(parsed.type)) {
+    return false;
+  }
+
+  if (eventName && eventName !== 'ping' && eventName !== parsed.type) {
+    return false;
+  }
+
+  return true;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const GEMINI_SCHEMA_KEYS_TO_REMOVE = new Set(['$schema', '$ref', 'ref', 'additionalProperties']);
@@ -1055,13 +1487,24 @@ const CODEX_SYSTEM_PROMPT_SIGNATURES = [
   'You are OpenCode, You and the user share the same workspace',
   'You are a coding agent running in',
 ];
+const OPENCODE_SUBAGENT_PROMPT_RE =
+  /call the task tool with subagent:\s*([a-zA-Z0-9_-]+)/i;
+
+interface OpenCodeSubagentRequest {
+  name: string;
+}
 
 async function transformRequestBody(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   url: string,
+  config: OmniRouteConfig,
 ): Promise<string | undefined> {
-  if (!url.includes('/chat/completions') && !url.includes('/responses')) {
+  if (
+    !url.includes('/chat/completions') &&
+    !url.includes('/responses') &&
+    !url.includes('/messages')
+  ) {
     return undefined;
   }
 
@@ -1083,11 +1526,14 @@ async function transformRequestBody(
 
   let changed = false;
   const beforeImages = countImageParts(payload);
-  changed = normalizeReasoningPayload(payload) || changed;
-  changed = normalizeChatPayload(payload, url) || changed;
-  changed = normalizeResponsesPayload(payload, url) || changed;
-  changed = slimCodexPayload(payload) || changed;
-  changed = sanitizeGeminiToolSchemas(payload) || changed;
+  changed = normalizeAnthropicMessagesPayload(payload, url, config) || changed;
+  if (!url.includes('/messages')) {
+    changed = normalizeReasoningPayload(payload) || changed;
+    changed = normalizeChatPayload(payload, url) || changed;
+    changed = normalizeResponsesPayload(payload, url) || changed;
+    changed = slimCodexPayload(payload) || changed;
+    changed = sanitizeGeminiToolSchemas(payload) || changed;
+  }
 
   if (DEBUG) {
     const afterImages = countImageParts(payload);
@@ -1099,6 +1545,325 @@ async function transformRequestBody(
   }
 
   return changed ? JSON.stringify(payload) : undefined;
+}
+
+function normalizeAnthropicMessagesPayload(
+  payload: Record<string, unknown>,
+  url: string,
+  config: OmniRouteConfig,
+): boolean {
+  if (!url.includes('/messages')) {
+    return false;
+  }
+
+  if (!canOverrideAnthropicToolChoice(payload.tool_choice)) {
+    return false;
+  }
+
+  const subagentRequest = findRequestedOpenCodeSubagent(payload.messages);
+  if (subagentRequest && hasToolNamed(payload.tools, 'task')) {
+    payload.tool_choice = {
+      type: 'tool',
+      name: 'task',
+    };
+    debugLog(`[OmniRoute] Forced Anthropic task tool for @${subagentRequest.name}`);
+    return true;
+  }
+
+  if (shouldForceAnthropicReadAfterGlob(payload, config.anthropicToolChoice)) {
+    appendAnthropicStarterToolInstruction(payload.messages, 'read');
+    payload.tool_choice = {
+      type: 'tool',
+      name: 'read',
+    };
+    debugLog('[OmniRoute] Forced Anthropic follow-up tool: read');
+    return true;
+  }
+
+  const starterTool = getAnthropicStarterTool(payload, config.anthropicToolChoice);
+  if (starterTool) {
+    appendAnthropicStarterToolInstruction(payload.messages, starterTool);
+    payload.tool_choice = {
+      type: 'tool',
+      name: starterTool,
+    };
+    debugLog(`[OmniRoute] Forced Anthropic starter tool: ${starterTool}`);
+    return true;
+  }
+
+  if (shouldForceAnthropicAnyTool(payload, config.anthropicToolChoice)) {
+    payload.tool_choice = {
+      type: 'any',
+    };
+    debugLog('[OmniRoute] Forced Anthropic tool use with tool_choice=any');
+    return true;
+  }
+
+  return false;
+}
+
+function canOverrideAnthropicToolChoice(toolChoice: unknown): boolean {
+  if (toolChoice === undefined) {
+    return true;
+  }
+
+  if (toolChoice === 'auto') {
+    return true;
+  }
+
+  return isRecord(toolChoice) && toolChoice.type === 'auto';
+}
+
+function hasEnabledAnthropicThinking(thinking: unknown): boolean {
+  if (thinking === undefined || thinking === false) {
+    return false;
+  }
+
+  if (!isRecord(thinking)) {
+    return true;
+  }
+
+  return thinking.type !== 'disabled';
+}
+
+function hasToolNamed(tools: unknown, name: string): boolean {
+  if (!Array.isArray(tools)) {
+    return false;
+  }
+
+  return tools.some((tool) => isRecord(tool) && tool.name === name);
+}
+
+function shouldForceAnthropicReadAfterGlob(
+  payload: Record<string, unknown>,
+  policy: OmniRouteAnthropicToolChoicePolicy | undefined,
+): boolean {
+  if (policy === 'auto' || !isCursorComposerPayloadModel(payload.model)) {
+    return false;
+  }
+
+  if (!hasToolNamed(payload.tools, 'read')) {
+    return false;
+  }
+
+  const firstUserText = getFirstUserMessageText(payload.messages)?.toLowerCase() ?? '';
+  if (!/(^|\b)(explore|pelajari|inspect|map|petakan|struktur)(\b|$)/i.test(firstUserText)) {
+    return false;
+  }
+
+  return hasAssistantToolUse(payload.messages, 'glob') && !hasAssistantToolUse(payload.messages, 'read');
+}
+
+function getFirstUserMessageText(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) {
+    return undefined;
+  }
+
+  const message = messages.find((item) => isRecord(item) && item.role === 'user');
+  return isRecord(message) ? collectTextContent(message.content ?? message).join('\n') : undefined;
+}
+
+function hasAssistantToolUse(messages: unknown, name: string): boolean {
+  if (!Array.isArray(messages)) {
+    return false;
+  }
+
+  return messages.some((message) => {
+    if (!isRecord(message) || message.role !== 'assistant') {
+      return false;
+    }
+
+    return Array.isArray(message.content) && message.content.some(
+      (part) => isRecord(part) && part.type === 'tool_use' && part.name === name,
+    );
+  });
+}
+
+function appendAnthropicStarterToolInstruction(messages: unknown, toolName: string): void {
+  const latestUser = getLatestUserMessage(messages);
+  if (!latestUser) {
+    return;
+  }
+
+  const instruction =
+    toolName === 'glob'
+      ? 'Before answering, call the glob tool first with pattern "**/*" to inspect this project.'
+      : `Before answering, call the ${toolName} tool first to inspect this project.`;
+
+  if (typeof latestUser.content === 'string') {
+    if (!latestUser.content.includes(instruction)) {
+      latestUser.content = `${latestUser.content}\n\n${instruction}`;
+    }
+    return;
+  }
+
+  if (Array.isArray(latestUser.content)) {
+    const hasInstruction = latestUser.content.some(
+      (part) => isRecord(part) && part.type === 'text' && part.text === instruction,
+    );
+    if (!hasInstruction) {
+      latestUser.content.push({ type: 'text', text: instruction });
+    }
+  }
+}
+
+function getAnthropicStarterTool(
+  payload: Record<string, unknown>,
+  policy: OmniRouteAnthropicToolChoicePolicy | undefined,
+): string | undefined {
+  if (policy === 'auto') {
+    return undefined;
+  }
+
+  if (!isCursorComposerPayloadModel(payload.model)) {
+    return undefined;
+  }
+
+  const latestUserText = getLatestUserMessageText(payload.messages)?.toLowerCase() ?? '';
+  if (!/(^|\b)(explore|pelajari|inspect|map|petakan|struktur)(\b|$)/i.test(latestUserText)) {
+    return undefined;
+  }
+
+  if (hasToolNamed(payload.tools, 'glob')) {
+    return 'glob';
+  }
+
+  if (hasToolNamed(payload.tools, 'read')) {
+    return 'read';
+  }
+
+  return undefined;
+}
+
+function shouldForceAnthropicAnyTool(
+  payload: Record<string, unknown>,
+  policy: OmniRouteAnthropicToolChoicePolicy | undefined,
+): boolean {
+  if (!hasAnyNamedTool(payload.tools)) {
+    return false;
+  }
+
+  if (hasAssistantToolUse(payload.messages, 'glob') || hasAssistantToolUse(payload.messages, 'read')) {
+    return false;
+  }
+
+  if (policy === 'auto') {
+    return false;
+  }
+
+  if (policy === 'any') {
+    return true;
+  }
+
+  return isCursorComposerPayloadModel(payload.model);
+}
+
+function sanitizeDebugPayload(rawBody: string): string {
+  try {
+    const parsed = JSON.parse(rawBody) as unknown;
+    if (!isRecord(parsed)) {
+      return rawBody;
+    }
+
+    const sanitized: Record<string, unknown> = {
+      model: parsed.model,
+      max_tokens: parsed.max_tokens,
+      thinking: parsed.thinking,
+      tool_choice: parsed.tool_choice,
+      tools: Array.isArray(parsed.tools)
+        ? parsed.tools.map((tool) => (isRecord(tool) ? tool.name : undefined))
+        : undefined,
+      messages: Array.isArray(parsed.messages)
+        ? parsed.messages.map((message) => {
+            if (!isRecord(message)) return message;
+            return {
+              role: message.role,
+              contentTypes: Array.isArray(message.content)
+                ? message.content.map((part) => (isRecord(part) ? part.type : typeof part))
+                : typeof message.content,
+            };
+          })
+        : undefined,
+    };
+
+    return JSON.stringify(sanitized);
+  } catch {
+    return rawBody;
+  }
+}
+
+function hasAnyNamedTool(tools: unknown): boolean {
+  if (!Array.isArray(tools)) {
+    return false;
+  }
+
+  return tools.some((tool) => isRecord(tool) && typeof tool.name === 'string');
+}
+
+function isCursorComposerPayloadModel(model: unknown): boolean {
+  return typeof model === 'string' && isCursorComposerModel(model);
+}
+
+function findRequestedOpenCodeSubagent(
+  messages: unknown,
+): OpenCodeSubagentRequest | undefined {
+  const latestUserText = getLatestUserMessageText(messages);
+  const text = latestUserText ?? collectTextContent(messages).join('\n');
+  const agentPartMatch = text.match(OPENCODE_SUBAGENT_PROMPT_RE);
+  if (agentPartMatch?.[1]) {
+    return {
+      name: agentPartMatch[1],
+    };
+  }
+
+  return undefined;
+}
+
+function getLatestUserMessageText(messages: unknown): string | undefined {
+  const message = getLatestUserMessage(messages);
+  if (!message) {
+    return undefined;
+  }
+
+  return collectTextContent(message.content ?? message).join('\n');
+}
+
+function getLatestUserMessage(messages: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(messages)) {
+    return undefined;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message)) {
+      continue;
+    }
+    if (message.role === 'user') {
+      return message;
+    }
+  }
+
+  return undefined;
+}
+
+function collectTextContent(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return [value];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectTextContent(item));
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const current = typeof value.text === 'string' ? [value.text] : [];
+  return [
+    ...current,
+    ...collectTextContent(value.content),
+  ];
 }
 
 function normalizeResponsesPayload(payload: Record<string, unknown>, url: string): boolean {

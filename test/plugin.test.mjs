@@ -98,6 +98,29 @@ test('config hook switches provider package and URL for responses mode', async (
   assert.equal(config.provider.omniroute.models['gpt-4o'].api.url, 'http://localhost:20128/v1');
 });
 
+test('config hook supports Anthropic Messages mode', async () => {
+  process.env.OPENCODE_AUTH_PATH = join(tmpdir(), 'missing-opencode-auth.json');
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        env: ['TEST_OMNIROUTE_API_KEY_DISABLED'],
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'anthropic',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.api, 'http://localhost:20128/v1');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/anthropic');
+  assert.equal(config.provider.omniroute.options.apiMode, 'anthropic');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/anthropic');
+});
+
 test('config hook eagerly hydrates OmniRoute models when API key env is available', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const previousApiKey = process.env.OMNIROUTE_API_KEY;
@@ -505,6 +528,103 @@ test('chat hooks add OpenAI-like session headers and Codex params', async () => 
   });
 });
 
+test('chat params hook leaves Anthropic routed models untouched in responses config', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const hookInput = {
+    sessionID: 'session-123',
+    agent: 'build',
+    model: {
+      id: 'cu/claude-4.6-sonnet-medium-thinking',
+      providerID: 'omniroute',
+      api: {
+        id: 'cu/claude-4.6-sonnet-medium-thinking',
+        url: 'http://localhost:20128/v1',
+        npm: '@ai-sdk/anthropic',
+      },
+    },
+    provider: {
+      options: {
+        apiMode: 'responses',
+      },
+    },
+    message: {},
+  };
+
+  const params = await plugin['chat.params'](hookInput, {
+    temperature: 0.5,
+    topP: 1,
+    maxOutputTokens: 32000,
+    options: {
+      previous: true,
+    },
+  });
+
+  assert.deepEqual(params, {
+    temperature: 0.5,
+    topP: 1,
+    maxOutputTokens: 32000,
+    options: {
+      previous: true,
+    },
+  });
+});
+
+test('chat message hook converts OpenCode agent mention to direct subtask', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const output = {
+    parts: [
+      {
+        id: 'prt_user_text',
+        sessionID: 'ses_123',
+        messageID: 'msg_123',
+        type: 'text',
+        text: '@explore cek project ini',
+      },
+      {
+        id: 'prt_agent',
+        sessionID: 'ses_123',
+        messageID: 'msg_123',
+        type: 'agent',
+        name: 'explore',
+        source: {
+          value: '@explore',
+          start: 0,
+          end: 8,
+        },
+      },
+      {
+        id: 'prt_synthetic',
+        sessionID: 'ses_123',
+        messageID: 'msg_123',
+        type: 'text',
+        synthetic: true,
+        text: [
+          'Use the above message and context to generate a prompt',
+          'and call the task tool with subagent: explore',
+        ].join(' '),
+      },
+    ],
+  };
+
+  await plugin['chat.message'](
+    {
+      model: {
+        providerID: 'omniroute',
+        modelID: 'cu/composer-2.5',
+      },
+    },
+    output,
+  );
+
+  const subtask = output.parts.find((part) => part.type === 'subtask');
+  assert.ok(subtask);
+  assert.equal(subtask.agent, 'explore');
+  assert.equal(subtask.description, 'explore task');
+  assert.equal(subtask.prompt, 'cek project ini');
+  assert.equal(output.parts.some((part) => part.synthetic === true), false);
+  assert.equal(output.parts.some((part) => part.type === 'agent'), false);
+});
+
 test('responses mode preserves configured variants from provider options', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const config = {
@@ -768,7 +888,7 @@ test('embedded high suffix models keep fixed reasoning option by default', async
   assert.deepEqual(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].variants, {});
 });
 
-test('responses mode falls back anthropic-family models to chat provider runtime', async () => {
+test('responses mode routes anthropic-family models to Anthropic Messages runtime', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const config = {
     provider: {
@@ -798,8 +918,92 @@ test('responses mode falls back anthropic-family models to chat provider runtime
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm, '@ai-sdk/openai');
-  assert.equal(config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.url, 'http://localhost:20128/v1');
+  assert.equal(
+    config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.npm,
+    '@ai-sdk/anthropic',
+  );
+  assert.equal(
+    config.provider.omniroute.models['antigravity/claude-opus-4-1'].provider.npm,
+    '@ai-sdk/anthropic',
+  );
+  assert.equal(
+    config.provider.omniroute.models['antigravity/claude-opus-4-1'].api.url,
+    'http://localhost:20128/v1',
+  );
+});
+
+test('responses mode routes Cursor Composer to Anthropic Messages runtime', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'cu/composer-2.5': {
+            name: 'Composer 2.5',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 200000,
+              output: 8192,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  const model = config.provider.omniroute.models['cu/composer-2.5'];
+  assert.equal(model.api.npm, '@ai-sdk/anthropic');
+  assert.equal(model.provider.npm, '@ai-sdk/anthropic');
+  assert.equal(model.api.url, 'http://localhost:20128/v1');
+  assert.equal(model.provider.api, 'http://localhost:20128/v1');
+  assert.equal(model.capabilities.reasoning, true);
+  assert.deepEqual(model.options, {});
+});
+
+test('cursor-routed Claude thinking models do not receive OpenAI reasoning options', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'cu/claude-4.6-sonnet-medium-thinking': {
+            name: 'Claude 4.6 Sonnet Medium Thinking',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: true,
+            },
+            limit: {
+              context: 200000,
+              output: 64000,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  const model = config.provider.omniroute.models['cu/claude-4.6-sonnet-medium-thinking'];
+  assert.equal(model.api.npm, '@ai-sdk/anthropic');
+  assert.equal(model.capabilities.reasoning, false);
+  assert.deepEqual(model.options, {});
+  assert.deepEqual(model.variants, {});
 });
 
 test('responses mode falls back antigravity gemini models to chat provider runtime', async () => {
@@ -1002,6 +1206,501 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
 
   const externalHeaders = new Headers(externalCall.init?.headers);
   assert.equal(externalHeaders.get('Authorization'), null);
+});
+
+test('loader adds Anthropic-compatible API key header for messages endpoint', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    calls.push({ url, init });
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'cu/claude-4.6-sonnet-medium-thinking', messages: [] }),
+  });
+
+  const messagesCall = calls.find((call) => call.url.endsWith('/v1/messages'));
+  assert.ok(messagesCall);
+
+  const headers = new Headers(messagesCall.init?.headers);
+  assert.equal(headers.get('Authorization'), 'Bearer secret-key');
+  assert.equal(headers.get('x-api-key'), 'secret-key');
+  assert.equal(headers.get('Content-Type'), 'application/json');
+});
+
+test('loader drops invalid empty Anthropic SSE events from messages stream', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const sse = [
+    'event: message_start',
+    'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"cx/gpt-5.5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
+    '',
+    'event: ping',
+    'data: {}',
+    '',
+    'data: {}',
+    '',
+    'event: content_block_start',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+    '',
+    'event: content_block_stop',
+    'data: {"type":"content_block_stop","index":0}',
+    '',
+    'event: message_stop',
+    'data: {"type":"message_stop"}',
+    '',
+  ].join('\n');
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(sse, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  const response = await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'cx/gpt-5.5', messages: [], stream: true }),
+  });
+  const text = await response.text();
+
+  assert.equal(response.headers.get('Content-Type'), 'text/event-stream');
+  assert.match(text, /"type":"message_start"/);
+  assert.match(text, /"type":"content_block_delta"/);
+  assert.doesNotMatch(text, /data: \{\}/);
+});
+
+test('loader does not sanitize non-messages event streams', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('data: {}\n\n', {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  const response = await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [], stream: true }),
+  });
+
+  assert.equal(await response.text(), 'data: {}\n\n');
+});
+
+test('loader forces task tool for OpenCode agent mentions on Anthropic messages', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const forwardedBodies = [];
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBodies.push(JSON.parse(raw));
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'cu/composer-2.5',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '@explore ' },
+            {
+              type: 'text',
+              text: [
+                'Use the above message and context to generate a prompt',
+                'and call the task tool with subagent: explore',
+              ].join(' '),
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          name: 'task',
+          input_schema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+      ],
+    }),
+  });
+
+  assert.deepEqual(forwardedBodies.at(-1).tool_choice, {
+    type: 'tool',
+    name: 'task',
+  });
+});
+
+test('loader forces a starter Anthropic tool for Cursor Composer exploration prompts', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+  let forwardedHeaders;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedHeaders = new Headers(init?.headers);
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'cu/composer-2.5',
+      messages: [
+        {
+          role: 'user',
+          content: 'explore project ini',
+        },
+      ],
+      tools: [
+        {
+          name: 'read',
+          input_schema: {
+            type: 'object',
+            properties: {
+              filePath: { type: 'string' },
+            },
+          },
+        },
+        {
+          name: 'grep',
+          input_schema: {
+            type: 'object',
+            properties: {
+              pattern: { type: 'string' },
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  assert.deepEqual(forwardedBody.tool_choice, {
+    type: 'tool',
+    name: 'read',
+  });
+  assert.equal(
+    forwardedHeaders.get('anthropic-beta'),
+    'claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14',
+  );
+  assert.equal(forwardedHeaders.get('x-api-key'), 'secret-key');
+  assert.match(forwardedBody.messages[0].content, /explore project ini/);
+  assert.match(forwardedBody.messages[0].content, /call the read tool first/);
+});
+
+test('loader forces generic Anthropic tool use for Cursor Composer when tools exist', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'cu/composer-2.5',
+      messages: [
+        {
+          role: 'user',
+          content: 'implement fitur kecil',
+        },
+      ],
+      tools: [
+        {
+          name: 'read',
+          input_schema: {
+            type: 'object',
+            properties: {
+              filePath: { type: 'string' },
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  assert.deepEqual(forwardedBody.tool_choice, {
+    type: 'any',
+  });
+});
+
+test('loader can leave generic Anthropic tool choice on auto by config', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+      anthropicToolChoice: 'auto',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'cu/composer-2.5',
+      messages: [
+        {
+          role: 'user',
+          content: 'explore project ini',
+        },
+      ],
+      tools: [
+        {
+          name: 'read',
+          input_schema: {
+            type: 'object',
+            properties: {
+              filePath: { type: 'string' },
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  assert.equal(forwardedBody.tool_choice, undefined);
+});
+
+test('loader preserves explicit Anthropic tool choice and forces tools with thinking settings', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const forwardedBodies = [];
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBodies.push(JSON.parse(raw));
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+  const basePayload = {
+    model: 'cu/composer-2.5',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'call the task tool with subagent: explore',
+          },
+        ],
+      },
+    ],
+    tools: [
+      {
+        name: 'task',
+        input_schema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+    ],
+  };
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...basePayload,
+      tool_choice: { type: 'none' },
+    }),
+  });
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...basePayload,
+      thinking: { type: 'enabled', budget_tokens: 1024 },
+    }),
+  });
+
+  assert.deepEqual(forwardedBodies[0].tool_choice, { type: 'none' });
+  assert.deepEqual(forwardedBodies[1].tool_choice, {
+    type: 'tool',
+    name: 'task',
+  });
+  assert.deepEqual(forwardedBodies[1].thinking, { type: 'enabled', budget_tokens: 1024 });
 });
 
 test('loader exposes full responses endpoint URL in responses mode', async () => {

@@ -21,6 +21,9 @@ This package exists for teams actually running OmniRoute in OpenCode and needing
 - **Real `apiMode: "responses"` wiring**
   - `chat` uses `@ai-sdk/openai`
   - `responses` uses `@ai-sdk/openai`
+  - `anthropic` uses `@ai-sdk/anthropic` against OmniRoute `/v1/messages`
+  - Anthropic-routed models expose OpenCode's per-model `provider.npm` override so
+    the runtime actually switches SDKs, not just the displayed model metadata
 - **OmniRoute responses compatibility fixes**
   - normalizes/removes unsupported token limit fields on `/responses`
   - converts `reasoningEffort` aliases into `reasoning.effort`
@@ -54,7 +57,7 @@ This package is for shipping OmniRoute-specific fixes without waiting for a gene
 - ✅ model caching with TTL
 - ✅ fallback models when API/model listing fails
 - ✅ combo model capability enrichment from `/api/combos`
-- ✅ `chat` and `responses` runtime modes
+- ✅ `chat`, `responses`, and `anthropic` runtime modes
 - ✅ reasoning variant support for OmniRoute reasoning models
 - ✅ request normalization for OmniRoute Responses API quirks
 - ✅ routed model enrichment for Anthropic/Gemini families behind providers like `antigravity`
@@ -235,7 +238,8 @@ Minimal example:
 | Option | Type | Description |
 |---|---|---|
 | `provider.omniroute.options.baseURL` | `string` | OmniRoute base URL. Default: `http://localhost:20128/v1` |
-| `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | Runtime API mode. Default: `chat` |
+| `provider.omniroute.options.apiMode` | `'chat' \| 'responses' \| 'anthropic'` | Runtime API mode. Default: `chat` |
+| `provider.omniroute.options.anthropicToolChoice` | `'auto' \| 'composer-any' \| 'any'` | Anthropic Messages tool-choice policy. Default: `composer-any` |
 | `provider.omniroute.options.refreshOnList` | `boolean` | Refresh model list on provider load. Default: `true` |
 | `provider.omniroute.options.modelCacheTtl` | `number` | Cache TTL in ms |
 | `provider.omniroute.options.modelsDev` | `object` | Configure models.dev enrichment |
@@ -269,6 +273,47 @@ Example:
     "omniroute": {
       "options": {
         "apiMode": "responses"
+      }
+    }
+  }
+}
+```
+
+### `anthropic`
+
+Uses:
+
+- `@ai-sdk/anthropic`
+- OmniRoute `/v1/messages`
+
+Best for Claude/Anthropic-family routed models and Cursor Composer models that stream tool calls correctly through OmniRoute's Anthropic-compatible Messages path. In global `responses` mode, Claude / Opus / Sonnet / Haiku model IDs and `cu/composer-2.5` are automatically routed through this runtime unless a per-model `apiMode` override says otherwise.
+
+The plugin also sanitizes OmniRoute Messages SSE streams before OpenCode's Anthropic SDK parser reads them. This mirrors Pi's tolerance for provider stream noise by dropping invalid empty events such as `data: {}` while preserving valid Anthropic message, content-block, ping, and error events.
+
+OpenCode selects the SDK package from the model's `provider.npm` override when present. The plugin sets both `api.npm` and `provider.npm` for Anthropic-routed models so `omniroute/cu/composer-2.5` uses `/v1/messages` instead of silently staying on `/v1/responses`.
+
+OpenCode agent mentions such as `@explore` arrive in plugin hooks as structured
+`agent` message parts. The plugin converts those parts into OpenCode `subtask`
+parts before the model turn, so the subagent runs directly instead of depending on
+Composer to choose the `task` tool from a synthetic instruction. For already-built
+Anthropic Messages payloads that still contain OpenCode's synthetic `task` prompt,
+the request normalizer also pins `tool_choice` to `task` when no explicit tool choice
+is present.
+
+For regular Composer turns with tools available, the default `anthropicToolChoice:
+"composer-any"` sets Anthropic `tool_choice` to `any`. That is a model/runtime-level
+fallback for Composer's weak automatic tool selection, not a prompt-text shortcut.
+Set `anthropicToolChoice: "auto"` to leave tool selection fully to the model, or
+`"any"` to require tool use for all Anthropic-routed models.
+
+Example:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "apiMode": "anthropic"
       }
     }
   }
@@ -344,22 +389,24 @@ Example:
 }
 ```
 
-By default, the plugin still applies a conservative fallback for known models that appear to break under Responses streaming, but an explicit per-model override wins.
+By default, the plugin still applies conservative runtime selection for known models that appear to break under Responses streaming, but an explicit per-model override wins.
 
-Current built-in fallback behavior in global `responses` mode:
+Current built-in runtime behavior in global `responses` mode:
 
 - Cursor default aliases `cu/default` and `cursor/default` fall back to `chat`
-- Anthropic-family routed models such as Claude / Opus / Sonnet / Haiku fall back to `chat`
+- Anthropic-family routed models such as Claude / Opus / Sonnet / Haiku use `anthropic`
+- Cursor Composer `cu/composer-2.5` uses `anthropic` because tool calls are valid on `/v1/messages` but can arrive without arguments on the OpenAI-compatible route
 - Gemini-family routed models fall back to `chat`
 - MLX/Qwen-style routed models such as `mlx/mlx-community/Qwen3.5-4B-MLX-8bit` fall back to `chat` when OmniRoute streams Chat Completions chunks on the Responses path
 - suffixes like `-thinking`, `-reasoning`, `-high`, `-medium`, `-low`, `-minimal`, `-max`, `-xhigh`, and `-none` are normalized before that decision
 
-This matters because some routed models may advertise support for both Chat Completions and Responses, but still emit `chat.completion.chunk` events when called through `/v1/responses`. In that case, the plugin prefers the safer `chat` runtime unless you explicitly override the model back to `responses`.
+This matters because some routed models may advertise support for both Chat Completions and Responses, but still emit `chat.completion.chunk` events when called through `/v1/responses`. In that case, the plugin prefers a safer runtime unless you explicitly override the model back to `responses`.
 
 For Cursor specifically:
 
 - `cu/default` and `cursor/default` are forced to `chat` because OmniRoute currently returns Chat Completions streaming there even when OpenCode is globally configured for `responses`
-- Cursor-routed Claude models continue to follow the existing Claude-family fallback behavior instead of getting a broader Cursor-wide special case
+- `cu/composer-2.5` is forced to `anthropic` because live OpenCode tool calls such as `read` succeed through Anthropic Messages, and OpenCode agent mentions are normalized toward the `task` tool on that path
+- Cursor-routed Claude models continue to follow the Claude-family Anthropic Messages behavior instead of getting a broader Cursor-wide special case
 
 ## Reasoning variants
 
@@ -399,7 +446,7 @@ When using `apiMode: "responses"`, the plugin normalizes request payloads for Om
 - converting reasoning aliases into the shape expected by Responses requests
 - stripping OpenCode/OpenAI-style aliases that OmniRoute currently rejects on `/v1/responses`, including `temperature`, `reasoningSummary`, `reasoning_summary`, `reasoningEffort`, `reasoning_effort`, and `textVerbosity`
 
-This plugin intentionally stays on `@ai-sdk/openai` for both Chat and Responses modes and treats OmniRoute compatibility as a payload-shaping problem rather than relying on a separate OpenAI-compatible runtime.
+Chat and Responses provider modes stay on `@ai-sdk/openai`, while Anthropic-family models and Cursor Composer use a per-model `@ai-sdk/anthropic` override so OpenCode receives Claude tool and reasoning streams through OmniRoute's `/v1/messages` path.
 
 For the current OmniRoute behavior tested locally, the plugin preserves Responses fields that are accepted for Codex/GPT-5-style models, including:
 

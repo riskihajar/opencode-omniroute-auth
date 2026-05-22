@@ -90,7 +90,9 @@ export interface OmniRouteModelsResponse {
   data: OmniRouteModel[];
 }
 
-export type OmniRouteApiMode = 'chat' | 'responses';
+export type OmniRouteApiMode = 'chat' | 'responses' | 'anthropic';
+
+export type OmniRouteAnthropicToolChoicePolicy = 'auto' | 'composer-any' | 'any';
 
 /**
  * OmniRoute configuration
@@ -100,8 +102,10 @@ export interface OmniRouteConfig {
   baseUrl: string;
   /** API key for authentication */
   apiKey: string;
-  /** API mode for OpenAI-compatible provider routing */
+  /** API mode for provider routing */
   apiMode: OmniRouteApiMode;
+  /** Tool choice policy for Anthropic Messages requests (default: composer-any) */
+  anthropicToolChoice?: OmniRouteAnthropicToolChoicePolicy;
   /** Default models to use if /v1/models fails */
   defaultModels?: OmniRouteModel[];
   /** Model cache TTL in milliseconds (default: 5 minutes) */
@@ -136,6 +140,10 @@ export interface OmniRouteProviderModel {
     id: string;
     url: string;
     npm: string;
+  };
+  provider?: {
+    api?: string;
+    npm?: string;
   };
   modalities?: {
     input: string[];
