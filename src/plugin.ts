@@ -1875,6 +1875,10 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
   const model = typeof payload.model === 'string' ? payload.model : '';
   const keepOpenAiProgressFields = isOpenAiCodexLikeModel(model);
 
+  if (keepOpenAiProgressFields) {
+    changed = ensureOpenAiReasoningSummary(payload) || changed;
+  }
+
   if (payload.max_output_tokens !== undefined) {
     delete payload.max_output_tokens;
     changed = true;
@@ -1912,6 +1916,38 @@ function normalizeResponsesPayload(payload: Record<string, unknown>, url: string
 
   if (payload.temperature !== undefined) {
     delete payload.temperature;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function ensureOpenAiReasoningSummary(payload: Record<string, unknown>): boolean {
+  let changed = false;
+
+  const reasoning = isRecord(payload.reasoning) ? payload.reasoning : {};
+  if (!isRecord(payload.reasoning)) {
+    payload.reasoning = reasoning;
+    changed = true;
+  }
+
+  if (typeof reasoning.effort !== 'string') {
+    reasoning.effort = typeof payload.reasoningEffort === 'string' ? payload.reasoningEffort : 'medium';
+    changed = true;
+  }
+
+  if (reasoning.summary !== 'auto') {
+    reasoning.summary = 'auto';
+    changed = true;
+  }
+
+  if (!Array.isArray(payload.include)) {
+    payload.include = ['reasoning.encrypted_content'];
+    return true;
+  }
+
+  if (!payload.include.includes('reasoning.encrypted_content')) {
+    payload.include = [...payload.include, 'reasoning.encrypted_content'];
     changed = true;
   }
 

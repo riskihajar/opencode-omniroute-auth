@@ -2256,7 +2256,111 @@ test('responses payload keeps OpenAI progress fields for Codex-style models', as
   assert.ok(forwardedBody);
   assert.equal(forwardedBody.reasoningSummary, 'detailed');
   assert.equal(forwardedBody.reasoning_summary, undefined);
-  assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'high', summary: 'auto' });
+  assert.deepEqual(forwardedBody.include, ['reasoning.encrypted_content']);
+});
+
+test('responses payload requests reasoning summary text for Codex-style models by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'cx/gpt-5.5',
+      input: 'test',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'medium', summary: 'auto' });
+  assert.deepEqual(forwardedBody.include, ['reasoning.encrypted_content']);
+});
+
+test('responses payload appends reasoning encrypted content include for Codex-style models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'codex/gpt-5.4',
+      input: 'test',
+      reasoning: { effort: 'high', summary: 'detailed' },
+      include: ['file_search_call.results'],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'high', summary: 'auto' });
+  assert.deepEqual(forwardedBody.include, [
+    'file_search_call.results',
+    'reasoning.encrypted_content',
+  ]);
 });
 
 test('responses payload keeps OmniRoute-supported responses fields', async () => {
