@@ -1,75 +1,54 @@
-# OpenCode OmniRoute Auth Plugin
+# OpenCode OmniRoute Auth
 
-OpenCode plugin for using **OmniRoute** as a first-class provider with:
+<p align="center">
+  <strong>OmniRoute provider plugin for OpenCode with real auth, dynamic models, Responses mode, Anthropic Messages routing, reasoning variants, and vision-aware metadata.</strong>
+</p>
 
-- `/connect omniroute` auth flow
-- dynamic `/v1/models` discovery
-- OmniRoute-specific metadata enrichment
-- safer combo model capability handling
-- practical **Responses API** compatibility work for real OpenCode usage
+<p align="center">
+  <a href="https://www.npmjs.com/package/@riskihajar/opencode-omniroute-auth"><img alt="npm version" src="https://img.shields.io/npm/v/@riskihajar/opencode-omniroute-auth?style=for-the-badge&color=0f766e"></a>
+  <a href="https://www.npmjs.com/package/@riskihajar/opencode-omniroute-auth"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@riskihajar/opencode-omniroute-auth?style=for-the-badge&color=0369a1"></a>
+  <a href="./LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@riskihajar/opencode-omniroute-auth?style=for-the-badge&color=52525b"></a>
+  <img alt="node" src="https://img.shields.io/node/v/@riskihajar/opencode-omniroute-auth?style=for-the-badge&color=16a34a">
+  <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=for-the-badge">
+</p>
 
-This package is intentionally released separately because it goes beyond a minimal fork and tracks OmniRoute/OpenCode interoperability fixes faster.
+<p align="center">
+  <a href="#quick-start">Quick Start</a> -
+  <a href="#api-modes">API Modes</a> -
+  <a href="#configuration">Configuration</a> -
+  <a href="#debugging">Debugging</a>
+</p>
 
-## Why this package exists
+---
 
-If you only want a generic fork, the upstream/mainline style plugin may be enough.
+## What This Is
 
-This package exists for teams actually running OmniRoute in OpenCode and needing things that work in practice, not just on paper.
+`@riskihajar/opencode-omniroute-auth` makes OmniRoute usable as a first-class OpenCode provider.
 
-### What is different here
-
-- **Real `apiMode: "responses"` wiring**
-  - `chat` uses `@ai-sdk/openai`
-  - `responses` uses `@ai-sdk/openai`
-  - `anthropic` uses `@ai-sdk/anthropic` against OmniRoute `/v1/messages`
-  - Anthropic-routed models expose OpenCode's per-model `provider.npm` override so
-    the runtime actually switches SDKs, not just the displayed model metadata
-- **OmniRoute responses compatibility fixes**
-  - normalizes/removes unsupported token limit fields on `/responses`
-  - converts `reasoningEffort` aliases into `reasoning.effort`
-- **Variant support for reasoning models**
-  - keeps `low` / `medium` / `high`
-  - merges generated variants with custom ones like `xhigh`
-- **OmniRoute-aware model metadata enrichment**
-  - `models.dev` enrichment for context/output limits
-  - routed-provider matching using OmniRoute `root` / `owned_by` metadata
-  - combo model lowest-common-capability calculation
-- **Safer OpenCode runtime behavior**
-  - provider bootstrap normalization
-  - local/runtime testing focused on actual OpenCode behavior
-
-### Why release it separately
-
-Because OmniRoute behavior and OpenCode provider behavior do not always line up cleanly.
-
-This package is for shipping OmniRoute-specific fixes without waiting for a generic upstream plugin direction, especially around:
-
-- Responses API behavior
-- reasoning variants
-- custom/proxy provider quirks
-- combo model metadata correctness
+It is not just an API-key wrapper. The plugin patches the practical compatibility gaps between OpenCode, OmniRoute, OpenAI-compatible routes, Anthropic-compatible routes, Cursor Composer models, Responses API payloads, and incomplete model metadata.
 
 ## Highlights
 
-- ✅ `/connect omniroute` support
-- ✅ API key authentication
-- ✅ dynamic model fetching from `/v1/models`
-- ✅ model caching with TTL
-- ✅ fallback models when API/model listing fails
-- ✅ combo model capability enrichment from `/api/combos`
-- ✅ `chat`, `responses`, and `anthropic` runtime modes
-- ✅ reasoning variant support for OmniRoute reasoning models
-- ✅ request normalization for OmniRoute Responses API quirks
-- ✅ routed model enrichment for Anthropic/Gemini families behind providers like `antigravity`
-- ✅ image capability hydration for GPT-5/Codex-style routed models
+| Area | What it does |
+|---|---|
+| Auth | Adds `/connect omniroute` and injects OmniRoute API keys safely. |
+| Models | Fetches `/v1/models`, caches with TTL, supports fallback defaults. |
+| Runtime modes | Supports `chat`, `responses`, and `anthropic`. |
+| Anthropic path | Uses `@ai-sdk/anthropic` against OmniRoute `/v1/messages`. |
+| Composer | Routes `cu/composer-2.5` through Anthropic Messages where tool calls work reliably. |
+| Responses | Normalizes OpenCode/OpenAI payloads before forwarding to `/v1/responses`. |
+| Reasoning | Adds reasoning variants and requests visible OpenAI/Codex reasoning summaries where supported. |
+| Vision | Hydrates image capability for GPT-5/Codex-style routed models when metadata is incomplete. |
+| Metadata | Enriches context, output, tools, reasoning, and image support from `models.dev`. |
+| Combos | Optionally resolves OmniRoute `/api/combos` with conservative capability merging. |
 
-## Installation
+## Install
 
 ```bash
 npm install -g @riskihajar/opencode-omniroute-auth
 ```
 
-Then add it to your OpenCode config:
+Add the plugin to your OpenCode config:
 
 ```json
 {
@@ -79,7 +58,7 @@ Then add it to your OpenCode config:
 }
 ```
 
-For local development you can also point OpenCode directly to the repository path:
+For local development:
 
 ```json
 {
@@ -89,139 +68,29 @@ For local development you can also point OpenCode directly to the repository pat
 }
 ```
 
-## Quick start
+## Quick Start
 
-### 1. Connect
+1. Start OmniRoute locally or point `baseURL` to your OmniRoute endpoint.
+2. Run `/connect omniroute` inside OpenCode.
+3. Paste your OmniRoute API key.
+4. Pick a model from `/models`.
+5. Run OpenCode with `omniroute/<model-id>`.
 
-Run:
-
-```bash
-/connect omniroute
-```
-
-Then paste your OmniRoute API key.
-
-### 2. Select model
-
-Use:
+CLI example:
 
 ```bash
-/models
+opencode run "explore project ini" --model omniroute/cu/composer-2.5
 ```
 
-### 3. Done
+## Recommended Configs
 
-The plugin will:
+### Balanced default
 
-- register the `omniroute` provider
-- fetch available models from OmniRoute
-- enrich model metadata when possible
-- inject auth headers for OmniRoute requests
-
-## Vision / image input
-
-### Pain point this plugin fixes
-
-OmniRoute model listings from `/v1/models` often do not include enough capability metadata for OpenCode to know whether a model supports image input.
-
-In practice that can cause a bad failure mode for image prompts:
-
-- OpenCode renders the dropped image as `[Image 1]`
-- the provider registry thinks the selected model is text-only
-- the image attachment is rejected before the request is sent
-- OpenCode injects an error message into the user payload instead of sending `input_image`
-
-That degraded payload looks like this:
+Use Chat Completions compatibility as the global default:
 
 ```json
 {
-  "role": "user",
-  "content": [
-    {
-      "type": "input_text",
-      "text": "[Image 1] ini gambar apa?"
-    },
-    {
-      "type": "input_text",
-      "text": "ERROR: Cannot read \"MAP-Midtrans-04-04-2026_10_14_PM.png\" (this model does not support image input). Inform the user."
-    }
-  ]
-}
-```
-
-This plugin now fixes that for supported GPT-5/Codex-style OmniRoute models by keeping image capability hydration stable across provider bootstrap and runtime refresh.
-
-### How image capability is detected
-
-The plugin decides image support in this order:
-
-1. explicit `provider.omniroute.options.modelMetadata`
-2. OmniRoute/runtime metadata when available
-3. `models.dev` enrichment when available
-4. conservative GPT-5/Codex-family fallback heuristics for known routed model families
-
-If a model is considered vision-capable, the provider model now exposes both:
-
-- `capabilities.attachment = true`
-- `modalities.input = ['text', 'image']`
-
-That combination is important because OpenCode uses provider capability metadata before deciding whether to serialize a dropped/pasted image as `input_image`.
-
-### How to confirm it works
-
-When image handling works, your request payload should contain a real image part, not just an injected error string:
-
-```json
-{
-  "role": "user",
-  "content": [
-    {
-      "type": "input_text",
-      "text": "[Image 1] gambar apa yok?"
-    },
-    {
-      "type": "input_image",
-      "image_url": "data:image/png;base64,..."
-    }
-  ]
-}
-```
-
-### If a model truly does not support image input
-
-The plugin prefers explicit metadata over heuristics.
-
-- If OmniRoute or your manual `modelMetadata` says a model does not support image input, that model should remain text-only.
-- If metadata is missing, the plugin only enables image support for known GPT-5/Codex-style families where real-world OpenCode usage would otherwise degrade badly.
-- Everything else stays on the safe default unless explicit metadata or enrichment says otherwise.
-
-If you know a routed model should stay text-only, pin it explicitly:
-
-```json
-{
-  "provider": {
-    "omniroute": {
-      "options": {
-        "modelMetadata": {
-          "some-provider/some-text-only-model": {
-            "supportsVision": false
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-## Configuration
-
-Minimal example:
-
-```json
-{
-  "plugin": [
-    "@riskihajar/opencode-omniroute-auth"
-  ],
+  "plugin": ["@riskihajar/opencode-omniroute-auth"],
   "provider": {
     "omniroute": {
       "options": {
@@ -233,45 +102,17 @@ Minimal example:
 }
 ```
 
-### Options
+### Responses-first OpenAI/Codex setup
 
-| Option | Type | Description |
-|---|---|---|
-| `provider.omniroute.options.baseURL` | `string` | OmniRoute base URL. Default: `http://localhost:20128/v1` |
-| `provider.omniroute.options.apiMode` | `'chat' \| 'responses' \| 'anthropic'` | Runtime API mode. Default: `chat` |
-| `provider.omniroute.options.anthropicToolChoice` | `'auto' \| 'composer-any' \| 'any'` | Anthropic Messages tool-choice policy. Default: `composer-any` |
-| `provider.omniroute.options.refreshOnList` | `boolean` | Refresh model list on provider load. Default: `true` |
-| `provider.omniroute.options.modelCacheTtl` | `number` | Cache TTL in ms |
-| `provider.omniroute.options.modelsDev` | `object` | Configure models.dev enrichment |
-| `provider.omniroute.options.modelMetadata` | `object \| array` | Override/add model metadata, including per-model `apiMode` and `resetEmbeddedReasoningVariant` |
-
-## API modes
-
-### `chat`
-
-Uses:
-
-- `@ai-sdk/openai`
-
-Best when your OmniRoute/OpenCode flow is primarily Chat Completions compatible.
-
-### `responses`
-
-Uses:
-
-- `@ai-sdk/openai`
-
-This is important.
-
-`responses` mode here is not just config decoration. It changes the runtime provider implementation so OpenCode can use native Responses API behavior.
-
-Example:
+Use this when you want GPT/Codex-style models to go through Responses API:
 
 ```json
 {
+  "plugin": ["@riskihajar/opencode-omniroute-auth"],
   "provider": {
     "omniroute": {
       "options": {
+        "baseURL": "http://localhost:20128/v1",
         "apiMode": "responses"
       }
     }
@@ -279,40 +120,19 @@ Example:
 }
 ```
 
-### `anthropic`
+In this mode the plugin still protects known non-Responses-safe models by switching them per-model to a safer runtime.
 
-Uses:
+### Anthropic-first setup
 
-- `@ai-sdk/anthropic`
-- OmniRoute `/v1/messages`
-
-Best for Claude/Anthropic-family routed models and Cursor Composer models that stream tool calls correctly through OmniRoute's Anthropic-compatible Messages path. In global `responses` mode, Claude / Opus / Sonnet / Haiku model IDs and `cu/composer-2.5` are automatically routed through this runtime unless a per-model `apiMode` override says otherwise.
-
-The plugin also sanitizes OmniRoute Messages SSE streams before OpenCode's Anthropic SDK parser reads them. This mirrors Pi's tolerance for provider stream noise by dropping invalid empty events such as `data: {}` while preserving valid Anthropic message, content-block, ping, and error events.
-
-OpenCode selects the SDK package from the model's `provider.npm` override when present. The plugin sets both `api.npm` and `provider.npm` for Anthropic-routed models so `omniroute/cu/composer-2.5` uses `/v1/messages` instead of silently staying on `/v1/responses`.
-
-OpenCode agent mentions such as `@explore` arrive in plugin hooks as structured
-`agent` message parts. The plugin converts those parts into OpenCode `subtask`
-parts before the model turn, so the subagent runs directly instead of depending on
-Composer to choose the `task` tool from a synthetic instruction. For already-built
-Anthropic Messages payloads that still contain OpenCode's synthetic `task` prompt,
-the request normalizer also pins `tool_choice` to `task` when no explicit tool choice
-is present.
-
-For regular Composer turns with tools available, the default `anthropicToolChoice:
-"composer-any"` sets Anthropic `tool_choice` to `any`. That is a model/runtime-level
-fallback for Composer's weak automatic tool selection, not a prompt-text shortcut.
-Set `anthropicToolChoice: "auto"` to leave tool selection fully to the model, or
-`"any"` to require tool use for all Anthropic-routed models.
-
-Example:
+Use this for Claude/Composer-style workloads through OmniRoute Messages API:
 
 ```json
 {
+  "plugin": ["@riskihajar/opencode-omniroute-auth"],
   "provider": {
     "omniroute": {
       "options": {
+        "baseURL": "http://localhost:20128/v1",
         "apiMode": "anthropic"
       }
     }
@@ -320,15 +140,59 @@ Example:
 }
 ```
 
-### Per-model `apiMode` override
+## API Modes
 
-Not every routed model behaves the same way behind OmniRoute.
+### `chat`
 
-Some models work best with Responses API, while others still stream in Chat Completions shape even when the provider is globally configured for `responses`.
+Uses `@ai-sdk/openai` against OmniRoute OpenAI-compatible chat routes.
 
-Because of that, this plugin supports **per-model `apiMode` overrides**.
+Best for broadly compatible models and routes that stream `chat.completion.chunk` events.
 
-Example: keep global `responses`, but pin a specific model to `chat`:
+### `responses`
+
+Uses `@ai-sdk/openai` against OmniRoute `/v1/responses`.
+
+The plugin normalizes payloads for real OmniRoute behavior:
+
+- removes unsupported token limit fields from Responses requests
+- strips rejected aliases such as `temperature`, `reasoning_summary`, `reasoning_effort`, and `textVerbosity`
+- converts `reasoningEffort` into `reasoning.effort`
+- preserves accepted Responses fields such as `store`, `prompt_cache_key`, `parallel_tool_calls`, `truncation`, `service_tier`, `metadata`, and `include`
+- for OpenAI/Codex-like models, requests reasoning summary support with `reasoning.summary = "auto"` and `include = ["reasoning.encrypted_content"]`
+
+Note: requesting reasoning summaries does not force OmniRoute/upstream to emit visible reasoning text. OpenCode can show `Thinking: ...` only when the stream contains the expected reasoning summary events.
+
+### `anthropic`
+
+Uses `@ai-sdk/anthropic` against OmniRoute `/v1/messages`.
+
+This is the important path for Anthropic-family models and Cursor Composer models:
+
+- sets both `api.npm` and `provider.npm` so OpenCode actually loads the Anthropic SDK
+- sends Anthropic-compatible headers, including Claude Code and interleaved/fine-grained tool streaming betas
+- sanitizes invalid empty SSE events such as `data: {}` before the Anthropic parser sees them
+- preserves valid Anthropic message/content/tool/ping/error stream events
+- supports Anthropic `thinking` payloads when OpenCode provides them
+- defaults Composer tool-choice handling to `composer-any` for more reliable tool execution
+
+## Automatic Runtime Routing
+
+When global `apiMode` is `responses`, the plugin still makes per-model routing decisions where OmniRoute behavior is known to differ from the advertised mode.
+
+| Model family | Runtime selected |
+|---|---|
+| OpenAI/Codex/GPT-style | `responses` unless overridden |
+| Claude / Opus / Sonnet / Haiku | `anthropic` |
+| `cu/composer-2.5` | `anthropic` |
+| `cu/default` / `cursor/default` | `chat` |
+| Gemini routed models | `chat` fallback |
+| MLX/Qwen-style routed models | `chat` fallback |
+
+Suffixes such as `-thinking`, `-reasoning`, `-high`, `-medium`, `-low`, `-minimal`, `-max`, `-xhigh`, and `-none` are normalized before routing decisions.
+
+## Per-Model Overrides
+
+Pin a model to a specific runtime when the default router is not what you want:
 
 ```json
 {
@@ -339,23 +203,7 @@ Example: keep global `responses`, but pin a specific model to `chat`:
         "modelMetadata": {
           "minimax/minimax-m1": {
             "apiMode": "chat"
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-Example: force a specific model to stay on `responses`:
-
-```json
-{
-  "provider": {
-    "omniroute": {
-      "options": {
-        "apiMode": "responses",
-        "modelMetadata": {
+          },
           "some-provider/some-model": {
             "apiMode": "responses"
           }
@@ -366,11 +214,7 @@ Example: force a specific model to stay on `responses`:
 }
 ```
 
-You can also set `apiMode` directly inside `provider.omniroute.models` entries when you define custom seeded models.
-
-If a routed model id already ends with an embedded reasoning suffix like `-high` or `-low`, you can clear that forced winner override and restore the normal variant picker with `resetEmbeddedReasoningVariant: true`.
-
-Example:
+Restore normal reasoning variant selection for models that already contain a suffix such as `-high`:
 
 ```json
 {
@@ -389,98 +233,81 @@ Example:
 }
 ```
 
-By default, the plugin still applies conservative runtime selection for known models that appear to break under Responses streaming, but an explicit per-model override wins.
+## Reasoning Support
 
-Current built-in runtime behavior in global `responses` mode:
-
-- Cursor default aliases `cu/default` and `cursor/default` fall back to `chat`
-- Anthropic-family routed models such as Claude / Opus / Sonnet / Haiku use `anthropic`
-- Cursor Composer `cu/composer-2.5` uses `anthropic` because tool calls are valid on `/v1/messages` but can arrive without arguments on the OpenAI-compatible route
-- Gemini-family routed models fall back to `chat`
-- MLX/Qwen-style routed models such as `mlx/mlx-community/Qwen3.5-4B-MLX-8bit` fall back to `chat` when OmniRoute streams Chat Completions chunks on the Responses path
-- suffixes like `-thinking`, `-reasoning`, `-high`, `-medium`, `-low`, `-minimal`, `-max`, `-xhigh`, and `-none` are normalized before that decision
-
-This matters because some routed models may advertise support for both Chat Completions and Responses, but still emit `chat.completion.chunk` events when called through `/v1/responses`. In that case, the plugin prefers a safer runtime unless you explicitly override the model back to `responses`.
-
-For Cursor specifically:
-
-- `cu/default` and `cursor/default` are forced to `chat` because OmniRoute currently returns Chat Completions streaming there even when OpenCode is globally configured for `responses`
-- `cu/composer-2.5` is forced to `anthropic` because live OpenCode tool calls such as `read` succeed through Anthropic Messages, and OpenCode agent mentions are normalized toward the `task` tool on that path
-- Cursor-routed Claude models continue to follow the Claude-family Anthropic Messages behavior instead of getting a broader Cursor-wide special case
-
-## Reasoning variants
-
-For reasoning-capable models, this plugin can expose variants like:
+For reasoning-capable models, the plugin can expose OpenCode variants such as:
 
 - `low`
 - `medium`
 - `high`
+- custom variants like `xhigh`
 
-and merge them with explicit model variants like:
+For Responses-mode OpenAI/Codex-like models, the plugin now also keeps OpenAI progress fields and asks for reasoning summary material in the shape OpenCode expects.
 
-- `xhigh`
+Expected outbound payload shape:
 
-This matters for OmniRoute/Codex-style models where upstream metadata is often incomplete or uneven.
+```json
+{
+  "model": "cx/gpt-5.5",
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "include": ["reasoning.encrypted_content"]
+}
+```
 
-## OmniRoute-specific behavior
+Important distinction:
 
-### 1. Dynamic model fetching
+- `tokens_reasoning > 0` means the model spent reasoning tokens.
+- Visible `Thinking: ...` in OpenCode requires upstream stream events carrying reasoning summary text.
+- If OmniRoute returns encrypted reasoning only, OpenCode may record reasoning tokens without showing summary text.
 
-Models are fetched from:
+## Vision / Image Input
 
-- `/v1/models`
+OmniRoute model listings often lack enough metadata for OpenCode to know whether a model accepts images. That can make OpenCode reject an image before the request is sent.
 
-### 2. Combo model enrichment
+The plugin fixes this for supported GPT-5/Codex-style routed models by hydrating both metadata fields OpenCode checks:
 
-Combo models are resolved using OmniRoute combo metadata from:
+- `capabilities.attachment = true`
+- `modalities.input = ["text", "image"]`
 
-- `/api/combos`
+Detection order:
 
-Capabilities are calculated conservatively using the lowest common denominator across resolvable backing models.
+1. explicit `provider.omniroute.options.modelMetadata`
+2. OmniRoute model metadata from `/v1/models`
+3. `models.dev` enrichment
+4. conservative GPT-5/Codex-family fallback heuristics
 
-### 3. Responses API normalization
+If a model should stay text-only, pin it explicitly:
 
-When using `apiMode: "responses"`, the plugin normalizes request payloads for OmniRoute quirks, including:
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "modelMetadata": {
+          "some-provider/some-text-only-model": {
+            "supportsVision": false
+          }
+        }
+      }
+    }
+  }
+}
+```
 
-- removing unsupported token limit fields
-- converting reasoning aliases into the shape expected by Responses requests
-- stripping OpenCode/OpenAI-style aliases that OmniRoute currently rejects on `/v1/responses`, including `temperature`, `reasoningSummary`, `reasoning_summary`, `reasoningEffort`, `reasoning_effort`, and `textVerbosity`
+## models.dev Enrichment
 
-Chat and Responses provider modes stay on `@ai-sdk/openai`, while Anthropic-family models and Cursor Composer use a per-model `@ai-sdk/anthropic` override so OpenCode receives Claude tool and reasoning streams through OmniRoute's `/v1/messages` path.
-
-For the current OmniRoute behavior tested locally, the plugin preserves Responses fields that are accepted for Codex/GPT-5-style models, including:
-
-- `store`
-- `prompt_cache_key`
-- `parallel_tool_calls`
-- `truncation`
-- `service_tier`
-- `top_p`
-- `presence_penalty`
-- `frequency_penalty`
-- `metadata`
-- `include`
-
-## models.dev enrichment
-
-OmniRoute model listings do not always provide enough metadata for a good OpenCode UX.
-
-This plugin can enrich models with data derived from `models.dev`, especially:
+The plugin can enrich OmniRoute models using `models.dev` data for:
 
 - context window
 - output token limit
 - tool support
 - reasoning support
-- image support when `modalities.input` includes `image`
+- image support
 
-It also tries harder to resolve routed OmniRoute models by:
-
-- checking the listed model `id`
-- checking OmniRoute `root`
-- normalizing runtime suffixes like `-thinking` or `-high`
-- mapping routed provider aliases such as `antigravity` to the most likely upstream family when matching `models.dev`
-
-Example:
+It also resolves routed names more aggressively by checking model `id`, OmniRoute `root`, provider aliases, and normalized suffix-free names.
 
 ```json
 {
@@ -493,7 +320,8 @@ Example:
           "timeoutMs": 1000,
           "cacheTtl": 86400000,
           "providerAliases": {
-            "cx": "openai"
+            "cx": "openai",
+            "antigravity": "anthropic"
           }
         }
       }
@@ -502,11 +330,41 @@ Example:
 }
 ```
 
-## Custom model metadata
+## Combo Models
 
-You can override or add model metadata manually.
+Combo model enrichment is available through OmniRoute `/api/combos`.
 
-JSON example:
+When enabled, the plugin calculates capabilities conservatively from backing models so OpenCode does not over-advertise tools, reasoning, or image support.
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "enableCombos": true
+      }
+    }
+  }
+}
+```
+
+## Configuration
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `baseURL` | `string` | `http://localhost:20128/v1` | OmniRoute base URL. |
+| `apiMode` | `chat` \| `responses` \| `anthropic` | `chat` | Global runtime mode. |
+| `anthropicToolChoice` | `auto` \| `composer-any` \| `any` | `composer-any` | Anthropic tool-choice policy. |
+| `refreshOnList` | `boolean` | `true` | Refresh models when provider is loaded. |
+| `modelCacheTtl` | `number` | package default | Model cache TTL in milliseconds. |
+| `modelsDev` | `object` | enabled defaults | Configure `models.dev` enrichment. |
+| `modelMetadata` | `object` \| `array` | none | Manual metadata overrides and matchers. |
+| `enableCombos` | `boolean` | `false` | Fetch and enrich OmniRoute combo models. |
+| `enableFullGpt55Context` | `boolean` | `false` | Trust OmniRoute's advertised GPT-5.5 1M context instead of using the safer clamped budget. |
+
+## Custom Metadata
+
+JSON config:
 
 ```json
 {
@@ -517,7 +375,9 @@ JSON example:
           "virtual/my-custom-model": {
             "contextWindow": 50000,
             "maxTokens": 2048,
-            "apiMode": "chat"
+            "apiMode": "chat",
+            "reasoning": true,
+            "supportsVision": false
           }
         }
       }
@@ -526,10 +386,10 @@ JSON example:
 }
 ```
 
-`opencode.js` example with matchers:
+JavaScript config with matchers:
 
 ```js
-{
+export default {
   provider: {
     omniroute: {
       options: {
@@ -540,10 +400,10 @@ JSON example:
       },
     },
   },
-}
+};
 ```
 
-## Runtime helpers
+## Runtime Helpers
 
 ```ts
 import {
@@ -553,61 +413,60 @@ import {
 } from '@riskihajar/opencode-omniroute-auth/runtime';
 ```
 
-## Debugging and self-test
+## Debugging
 
-### Check discovered models
-
-To inspect the OmniRoute provider model registry with debug logs enabled:
+Inspect discovered provider models:
 
 ```bash
-source ~/.zshrc && OMNIROUTE_PLUGIN_DEBUG=1 opencode models omniroute --print-logs --log-level DEBUG
+OMNIROUTE_PLUGIN_DEBUG=1 opencode models omniroute --print-logs --log-level DEBUG
 ```
 
-Useful things to verify in the output:
-
-- `Hydrated model codex/gpt-5.4: attachment=true input.image=true toolcall=true`
-- no later hydration pass flipping the same model back to `attachment=false`
-- `omniroute/cu/default` and `omniroute/cursor/default` should resolve without Responses parser errors
-
-### Spawn OpenCode for a quick self-test
-
-To reproduce image handling from the CLI:
+Run a real Composer turn through OmniRoute:
 
 ```bash
-source ~/.zshrc && OMNIROUTE_PLUGIN_DEBUG=1 opencode run --model omniroute/codex/gpt-5.4 "[Image 1] ini gambar apa?" --print-logs --log-level DEBUG
+OMNIROUTE_PLUGIN_DEBUG=1 opencode run "explore project ini" --model omniroute/cu/composer-2.5
 ```
 
-What to look for:
+Run a Responses-mode GPT/Codex turn:
 
-- if OpenCode still blocks image input before request serialization, your payload will degrade into injected `input_text` error content
-- if image serialization works, the user payload should contain `type: "input_image"`
+```bash
+OPENCODE_CONFIG_CONTENT='{"provider":{"omniroute":{"options":{"apiMode":"responses"}}}}' \
+  OMNIROUTE_PLUGIN_DEBUG=1 \
+  opencode run "jawab singkat: sebutkan 3 file utama project ini" --model omniroute/cx/gpt-5.5
+```
 
-### Common verification flow
+Useful things to verify:
 
-1. restart OpenCode completely after plugin changes
-2. run `opencode models omniroute --print-logs --log-level DEBUG`
-3. confirm the target model is hydrated with `attachment=true`
-4. drop or paste an image into a fresh session
-5. inspect the payload and confirm `input_image` is present
+- the selected model uses the intended SDK/runtime (`@ai-sdk/openai` or `@ai-sdk/anthropic`)
+- Composer calls use `/v1/messages`, not `/v1/responses`
+- image-capable models expose `attachment=true` and `input.image=true`
+- Responses payloads do not contain unsupported aliases rejected by OmniRoute
+- reasoning text appears only when OmniRoute emits reasoning summary stream events
 
 ## Development
 
 ```bash
 npm install
+npm run build
 npm test
 ```
 
-## Release philosophy
+Release preflight:
 
-This package is maintained as a pragmatic OmniRoute-focused distribution.
+```bash
+npm run prepublishOnly
+```
 
-That means the priority order is:
+## Why This Package Exists
 
-1. make it work in real OpenCode setups
-2. preserve OmniRoute-specific UX/features
-3. keep the public package easy to consume
+OmniRoute and OpenCode both move fast, and provider behavior is not uniform across routed model families. This package ships targeted OmniRoute compatibility fixes without waiting for generic upstream plugin behavior to catch up.
 
-If upstream/fork-main behavior is too generic to solve OmniRoute edge cases quickly, this package will continue shipping targeted fixes independently.
+Priority order:
+
+1. real OpenCode behavior works
+2. OmniRoute-specific UX is preserved
+3. model metadata is conservative instead of misleading
+4. public installation stays simple
 
 ## License
 
