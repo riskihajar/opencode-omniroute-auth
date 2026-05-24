@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { OMNIROUTE_ENDPOINTS, OMNIROUTE_PROVIDER_ID } from './src/constants.js';
 import { getOpencodeConfigDir, getOpencodeConfigFilePath } from './src/opencode-config.js';
 
 const SERVER_PLUGIN = '@riskihajar/opencode-omniroute-auth';
@@ -12,7 +13,7 @@ const TUI_SCHEMA = 'https://opencode.ai/tui.json';
 type InstallResult = {
   path: string;
   changed: boolean;
-  plugin: string;
+  label: string;
 };
 
 function main(): void {
@@ -37,7 +38,9 @@ function main(): void {
 function installPluginEntry(configPath: string, pluginName: string): InstallResult {
   const config = readJsonObject(configPath);
   const plugins = getOrCreatePluginArray(config, configPath);
-  const changed = addUnique(plugins, pluginName);
+  const pluginChanged = addUnique(plugins, pluginName);
+  const providerChanged = ensureOmniRouteProvider(config, configPath);
+  const changed = pluginChanged || providerChanged;
   if (changed) {
     writeJsonObject(configPath, config);
   }
@@ -45,7 +48,7 @@ function installPluginEntry(configPath: string, pluginName: string): InstallResu
   return {
     path: configPath,
     changed,
-    plugin: pluginName,
+    label: `${pluginName} and provider.${OMNIROUTE_PROVIDER_ID}`,
   };
 }
 
@@ -67,7 +70,7 @@ function installTuiPluginEntry(configPath: string, pluginName: string): InstallR
   return {
     path: configPath,
     changed,
-    plugin: pluginName,
+    label: pluginName,
   };
 }
 
@@ -114,6 +117,56 @@ function getOrCreatePluginArray(config: Record<string, unknown>, configPath: str
   return config.plugin;
 }
 
+function ensureOmniRouteProvider(config: Record<string, unknown>, configPath: string): boolean {
+  let changed = false;
+
+  if (config.provider === undefined) {
+    config.provider = {};
+    changed = true;
+  }
+
+  if (!isRecord(config.provider)) {
+    throw new Error(`Expected "provider" to be a JSON object in ${configPath}`);
+  }
+
+  const providers = config.provider;
+  if (providers[OMNIROUTE_PROVIDER_ID] === undefined) {
+    providers[OMNIROUTE_PROVIDER_ID] = {};
+    changed = true;
+  }
+
+  if (!isRecord(providers[OMNIROUTE_PROVIDER_ID])) {
+    throw new Error(
+      `Expected "provider.${OMNIROUTE_PROVIDER_ID}" to be a JSON object in ${configPath}`,
+    );
+  }
+
+  const provider = providers[OMNIROUTE_PROVIDER_ID];
+  if (provider.options === undefined) {
+    provider.options = {};
+    changed = true;
+  }
+
+  if (!isRecord(provider.options)) {
+    throw new Error(
+      `Expected "provider.${OMNIROUTE_PROVIDER_ID}.options" to be a JSON object in ${configPath}`,
+    );
+  }
+
+  const options = provider.options;
+  if (options.baseURL === undefined) {
+    options.baseURL = OMNIROUTE_ENDPOINTS.BASE_URL;
+    changed = true;
+  }
+
+  if (options.apiMode === undefined) {
+    options.apiMode = 'chat';
+    changed = true;
+  }
+
+  return changed;
+}
+
 function addUnique(values: string[], value: string): boolean {
   if (values.includes(value)) {
     return false;
@@ -125,14 +178,14 @@ function addUnique(values: string[], value: string): boolean {
 
 function printResult(result: InstallResult): void {
   const status = result.changed ? 'added' : 'already present';
-  console.log(`${status}: ${result.plugin}`);
+  console.log(`${status}: ${result.label}`);
   console.log(`  ${result.path}`);
 }
 
 function printHelp(): void {
   console.log('Usage: opencode-omniroute-auth install');
   console.log('');
-  console.log('Adds OmniRoute server and TUI plugins to OpenCode config files.');
+  console.log('Adds OmniRoute server provider and TUI plugin to OpenCode config files.');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

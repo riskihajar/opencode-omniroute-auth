@@ -54,8 +54,9 @@ Then install the OpenCode server and TUI entries:
 npx @riskihajar/opencode-omniroute-auth install
 ```
 
-The installer creates `opencode.json` and `tui.json` if they do not exist, and appends
-missing plugin entries without duplicating existing ones.
+The installer creates `opencode.json` and `tui.json` if they do not exist, appends missing
+plugin entries without duplicating existing ones, and adds the default
+`provider.omniroute.options` block without overwriting existing provider settings.
 
 Or add the plugin to your OpenCode config manually:
 
