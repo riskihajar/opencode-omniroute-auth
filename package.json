@@ -1,6 +1,6 @@
 {
   "name": "@riskihajar/opencode-omniroute-auth",
-  "version": "1.3.13",
+  "version": "1.3.14",
   "description": "OpenCode authentication plugin for OmniRoute API with /connect command and dynamic model fetching",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod 755 dist/install.js",
     "dev": "tsc --watch",
     "clean": "node -e \"const fs=require('fs');if(fs.existsSync('dist'))fs.rmSync('dist',{recursive:true});\"",
     "test": "npm run build && node --test test/*.test.mjs",
