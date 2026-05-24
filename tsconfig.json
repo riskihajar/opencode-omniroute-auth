@@ -17,6 +17,7 @@
   },
   "include": [
     "index.ts",
+    "install.ts",
     "runtime.ts",
     "tui.ts",
     "src/**/*",

@@ -48,7 +48,16 @@ It is not just an API-key wrapper. The plugin patches the practical compatibilit
 npm install -g @riskihajar/opencode-omniroute-auth
 ```
 
-Add the plugin to your OpenCode config:
+Then install the OpenCode server and TUI entries:
+
+```bash
+npx @riskihajar/opencode-omniroute-auth install
+```
+
+The installer creates `opencode.json` and `tui.json` if they do not exist, and appends
+missing plugin entries without duplicating existing ones.
+
+Or add the plugin to your OpenCode config manually:
 
 ```json
 {
