@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import OmniRouteAuthPlugin from '../dist/index.js';
+import OmniRouteTuiPlugin, { tui } from '../dist/tui.js';
 import { clearModelCache, clearModelsDevCache, fetchModels } from '../dist/runtime.js';
 
 const ORIGINAL_FETCH = global.fetch;
@@ -36,6 +37,69 @@ afterEach(() => {
   clearModelsDevCache();
   global.fetch = ORIGINAL_FETCH;
   delete process.env.OPENCODE_AUTH_PATH;
+  delete process.env.OPENCODE_CONFIG_DIR;
+});
+
+async function useTempOpenCodeStripConfig(value) {
+  const configDir = await mkdtemp(join(tmpdir(), 'omniroute-opencode-'));
+  process.env.OPENCODE_CONFIG_DIR = configDir;
+  await writeFile(join(configDir, 'opencode.json'), JSON.stringify({
+    provider: {
+      omniroute: {
+        options: {
+          stripOpenCodeSystemPrompt: value,
+        },
+      },
+    },
+  }));
+  return configDir;
+}
+
+test('tui plugin exposes status footer and toggles system prompt config', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'omniroute-opencode-'));
+  process.env.OPENCODE_CONFIG_DIR = configDir;
+  const registered = {};
+  const toasts = [];
+
+  await tui({
+    command: {
+      register: (factory) => {
+        registered.commands = factory();
+        return () => {};
+      },
+    },
+    slots: {
+      register: (plugin) => {
+        registered.slots = plugin.slots;
+        return () => {};
+      },
+    },
+    lifecycle: {
+      onDispose: () => {},
+    },
+    ui: {
+      toast: (input) => toasts.push(input.message),
+    },
+  });
+
+  assert.equal(typeof registered.slots.home_footer, 'function');
+  assert.match(registered.slots.home_footer(), /OFF$/);
+
+  const toggleCommand = registered.commands.find(
+    (command) => command.value === 'omniroute-system-prompt-toggle',
+  );
+  assert.equal(typeof toggleCommand.onSelect, 'function');
+  toggleCommand.onSelect();
+
+  assert.match(registered.slots.home_footer(), /ON$/);
+  assert.deepEqual(toasts, ['OpenCode system prompt stripping enabled']);
+
+  await rm(configDir, { recursive: true, force: true });
+});
+
+test('tui entry exposes OpenCode TUI plugin module shape', () => {
+  assert.equal(OmniRouteTuiPlugin.id, 'omniroute-system-prompt');
+  assert.equal(typeof OmniRouteTuiPlugin.tui, 'function');
 });
 
 function createModelsResponse() {
@@ -1252,6 +1316,392 @@ test('loader adds Anthropic-compatible API key header for messages endpoint', as
   assert.equal(headers.get('Authorization'), 'Bearer secret-key');
   assert.equal(headers.get('x-api-key'), 'secret-key');
   assert.equal(headers.get('Content-Type'), 'application/json');
+});
+
+test('loader can strip OpenCode system prompt from Anthropic messages payload', async () => {
+  await useTempOpenCodeStripConfig(true);
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+      stripOpenCodeSystemPrompt: true,
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'cu/composer-2.5',
+      system: 'You are OpenCode, the best coding agent on the planet.\nHidden policy.',
+      messages: [
+        {
+          role: 'user',
+          content: 'Say OK only.',
+        },
+      ],
+    }),
+  });
+
+  assert.equal(forwardedBody.system, undefined);
+  assert.deepEqual(forwardedBody.messages, [{ role: 'user', content: 'Say OK only.' }]);
+});
+
+test('loader strips lowercase OpenCode CLI system prompt from chat messages', async () => {
+  await useTempOpenCodeStripConfig(true);
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+      stripOpenCodeSystemPrompt: true,
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'kr/minimax-m2.5',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are opencode, an interactive CLI tool for software engineering tasks.',
+        },
+        {
+          role: 'user',
+          content: 'Say OK only.',
+        },
+      ],
+    }),
+  });
+
+  assert.deepEqual(forwardedBody.messages, [{ role: 'user', content: 'Say OK only.' }]);
+});
+
+test('loader structurally strips leading system messages when OpenCode prompt stripping is enabled', async () => {
+  await useTempOpenCodeStripConfig(true);
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+      stripOpenCodeSystemPrompt: true,
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'kr/minimax-m2.5',
+      messages: [
+        {
+          role: 'system',
+          content: 'Provider prompt plus environment and AGENTS.md instructions.',
+        },
+        {
+          role: 'developer',
+          content: 'Additional OpenCode instruction block.',
+        },
+        {
+          role: 'user',
+          content: 'Say OK only.',
+        },
+        {
+          role: 'system',
+          content: 'Non-leading synthetic system note.',
+        },
+      ],
+    }),
+  });
+
+  assert.deepEqual(forwardedBody.messages, [
+    { role: 'user', content: 'Say OK only.' },
+    { role: 'system', content: 'Non-leading synthetic system note.' },
+  ]);
+});
+
+test('loader strips OpenCode system prompt from input-shaped payloads before normalization', async () => {
+  await useTempOpenCodeStripConfig(true);
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+      stripOpenCodeSystemPrompt: true,
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'kr/minimax-m2.5',
+      input: [
+        {
+          role: 'developer',
+          content: [{ type: 'input_text', text: 'You are opencode, an interactive CLI tool.' }],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: 'Say OK only.' }],
+        },
+      ],
+    }),
+  });
+
+  assert.equal(forwardedBody.input, undefined);
+  assert.deepEqual(forwardedBody.messages, [{ role: 'user', content: 'Say OK only.' }]);
+});
+
+test('loader preserves OpenCode system prompt unless stripping is enabled', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'omniroute-opencode-'));
+  process.env.OPENCODE_CONFIG_DIR = configDir;
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'anthropic',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'cu/composer-2.5',
+      system: 'You are OpenCode, the best coding agent on the planet.\nHidden policy.',
+      messages: [
+        {
+          role: 'user',
+          content: 'Say OK only.',
+        },
+      ],
+    }),
+  });
+
+  assert.match(forwardedBody.system, /^You are OpenCode/);
+
+  await rm(configDir, { recursive: true, force: true });
+});
+
+test('loader reads OpenCode system prompt strip toggle on each request', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'omniroute-opencode-'));
+  process.env.OPENCODE_CONFIG_DIR = configDir;
+  const plugin = await OmniRouteAuthPlugin({});
+  const forwardedBodies = [];
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBodies.push(JSON.parse(raw));
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+      stripOpenCodeSystemPrompt: false,
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+  const body = {
+    model: 'kr/minimax-m2.5',
+    messages: [
+      {
+        role: 'system',
+        content: 'You are opencode, an interactive CLI tool.',
+      },
+      {
+        role: 'user',
+        content: 'Say OK only.',
+      },
+    ],
+  };
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+  await tui({
+    command: {
+      register: (factory) => {
+        const toggleCommand = factory().find(
+          (command) => command.value === 'omniroute-system-prompt-toggle',
+        );
+        toggleCommand.onSelect();
+        return () => {};
+      },
+    },
+    slots: {
+      register: () => {},
+    },
+  });
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+  assert.equal(forwardedBodies[0].messages[0].role, 'system');
+  assert.deepEqual(forwardedBodies[1].messages, [{ role: 'user', content: 'Say OK only.' }]);
+
+  await rm(configDir, { recursive: true, force: true });
 });
 
 test('loader drops invalid empty Anthropic SSE events from messages stream', async () => {

@@ -355,12 +355,64 @@ When enabled, the plugin calculates capabilities conservatively from backing mod
 | `baseURL` | `string` | `http://localhost:20128/v1` | OmniRoute base URL. |
 | `apiMode` | `chat` \| `responses` \| `anthropic` | `chat` | Global runtime mode. |
 | `anthropicToolChoice` | `auto` \| `composer-any` \| `any` | `composer-any` | Anthropic tool-choice policy. |
+| `stripOpenCodeSystemPrompt` | `boolean` | `false` | Remove OpenCode's built-in system prompt before forwarding. |
 | `refreshOnList` | `boolean` | `true` | Refresh models when provider is loaded. |
 | `modelCacheTtl` | `number` | package default | Model cache TTL in milliseconds. |
 | `modelsDev` | `object` | enabled defaults | Configure `models.dev` enrichment. |
 | `modelMetadata` | `object` \| `array` | none | Manual metadata overrides and matchers. |
 | `enableCombos` | `boolean` | `false` | Fetch and enrich OmniRoute combo models. |
 | `enableFullGpt55Context` | `boolean` | `false` | Trust OmniRoute's advertised GPT-5.5 1M context instead of using the safer clamped budget. |
+
+### OpenCode system prompt toggle
+
+The plugin exposes `stripOpenCodeSystemPrompt` as a visible OpenCode TUI toggle when the
+TUI subpath is enabled. OpenCode does not currently expose a dedicated plugin statusline
+slot, so OmniRoute registers the status in the TUI footer slots (`home_footer` and
+`sidebar_footer`) as:
+
+```text
+OmniRoute system prompt ON
+```
+
+Enable the server provider in `opencode.json`:
+
+```json
+{
+  "plugin": [
+    "@riskihajar/opencode-omniroute-auth"
+  ]
+}
+```
+
+Enable the visual TUI extension in `tui.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": [
+    "@riskihajar/opencode-omniroute-auth/tui"
+  ]
+}
+```
+
+Use `ctrl+p` and select `OmniRoute system prompt: ON/OFF`, or use the TUI slash commands
+`/omniroute-system-prompt-toggle`, `/omniroute-system-prompt-on`, and
+`/omniroute-system-prompt-off`. These are TUI commands, not Markdown prompt commands. The
+toggle writes:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "stripOpenCodeSystemPrompt": true
+      }
+    }
+  }
+}
+```
+
+Restart OpenCode or reload the provider config after changing the flag so new requests use it.
 
 ## Custom Metadata
 

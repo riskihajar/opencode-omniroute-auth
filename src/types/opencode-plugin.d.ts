@@ -1,4 +1,43 @@
 declare module '@opencode-ai/plugin' {
+  export type ToolContext = {
+    sessionID: string;
+    messageID: string;
+    agent: string;
+    directory: string;
+    worktree: string;
+    abort: AbortSignal;
+    metadata(input: {
+      title?: string;
+      metadata?: Record<string, unknown>;
+    }): void;
+    ask(input: {
+      permission: string;
+      patterns: string[];
+      always: string[];
+      metadata: Record<string, unknown>;
+    }): Promise<void>;
+  };
+
+  export type ToolDefinition = {
+    description: string;
+    args: Record<string, unknown>;
+    execute(args: Record<string, unknown>, context: ToolContext): Promise<string>;
+  };
+
+  export function tool<Args extends Record<string, unknown>>(input: {
+    description: string;
+    args: Args;
+    execute(args: Record<string, unknown>, context: ToolContext): Promise<string>;
+  }): ToolDefinition;
+
+  export namespace tool {
+    const schema: {
+      enum(values: readonly [string, ...string[]]): {
+        describe(description: string): unknown;
+      };
+    };
+  }
+
   export interface PluginInput {
     client: unknown;
     project: unknown;
@@ -124,6 +163,7 @@ declare module '@opencode-ai/plugin' {
 
   export interface Hooks {
     config?: (input: Config) => Promise<void>;
+    tool?: Record<string, ToolDefinition>;
     auth?: AuthHook;
     'chat.headers'?: (
       input: ChatHookInput,

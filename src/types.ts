@@ -106,6 +106,8 @@ export interface OmniRouteConfig {
   apiMode: OmniRouteApiMode;
   /** Tool choice policy for Anthropic Messages requests (default: composer-any) */
   anthropicToolChoice?: OmniRouteAnthropicToolChoicePolicy;
+  /** Remove OpenCode's built-in system prompt before forwarding requests (default: false) */
+  stripOpenCodeSystemPrompt?: boolean;
   /** Default models to use if /v1/models fails */
   defaultModels?: OmniRouteModel[];
   /** Model cache TTL in milliseconds (default: 5 minutes) */

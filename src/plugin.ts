@@ -1,4 +1,4 @@
-import type { Plugin, Hooks } from '@opencode-ai/plugin';
+import { tool, type Plugin, type Hooks } from '@opencode-ai/plugin';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +19,13 @@ import {
   OMNIROUTE_ENDPOINTS,
 } from './constants.js';
 import { fetchModels } from './models.js';
+import {
+  getConfiguredStripOpenCodeSystemPromptStatus,
+  getOpencodeConfigFilePath,
+  getStripOpenCodeSystemPromptStatus,
+  setStripOpenCodeSystemPromptStatus,
+  toggleStripOpenCodeSystemPromptStatus,
+} from './opencode-config.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai';
@@ -148,6 +155,9 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
 
       config.provider = providers;
     },
+    tool: {
+      omniroute_system_prompt: createSystemPromptToggleTool(),
+    },
     auth: createAuthHook(),
     'chat.message': createChatMessageHook(),
     'chat.headers': createChatHeadersHook(),
@@ -166,6 +176,36 @@ function createAuthHook(): AuthHook {
     ],
     loader: loadProviderOptions,
   };
+}
+
+function createSystemPromptToggleTool(): ReturnType<typeof tool> {
+  return tool({
+    description: 'Toggle OpenCode system prompt stripping for OmniRoute requests in opencode.json',
+    args: {
+      action: tool.schema.enum(['toggle', 'on', 'off', 'status']).describe(
+        'Whether to toggle, enable, disable, or show the current setting.',
+      ),
+    },
+    async execute(args): Promise<string> {
+      const action = typeof args.action === 'string' ? args.action : 'status';
+      const configPath = getOpencodeConfigFilePath();
+      const previous = getStripOpenCodeSystemPromptStatus();
+
+      if (action === 'status') {
+        return `OpenCode system prompt stripping is ${previous ? 'enabled' : 'disabled'}.`;
+      }
+
+      const next = action === 'toggle'
+        ? toggleStripOpenCodeSystemPromptStatus()
+        : setStripOpenCodeSystemPromptStatus(action === 'on');
+
+      return [
+        `OpenCode system prompt stripping is now ${next ? 'enabled' : 'disabled'}.`,
+        `Config updated: ${configPath}`,
+        'Restart OpenCode or reload the provider config for this setting to affect new requests.',
+      ].join('\n');
+    },
+  });
 }
 
 function createChatHeadersHook(): ChatHeadersHook {
@@ -321,6 +361,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   const refreshOnList = getBoolean(provider.options, 'refreshOnList');
   const enableCombos = getBoolean(provider.options, 'enableCombos');
   const enableFullGpt55Context = getBoolean(provider.options, 'enableFullGpt55Context');
+  const stripOpenCodeSystemPrompt = getBoolean(provider.options, 'stripOpenCodeSystemPrompt');
   const modelsDev = getModelsDevConfig(provider.options);
   const modelMetadata = getModelMetadataConfig(provider.options);
 
@@ -333,6 +374,7 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
     refreshOnList,
     enableCombos,
     enableFullGpt55Context,
+    stripOpenCodeSystemPrompt,
     modelsDev,
     modelMetadata,
   };
@@ -1221,7 +1263,8 @@ function createFetchInterceptor(
     }
     headers.set('Content-Type', 'application/json');
 
-    const transformedBody = await transformRequestBody(input, init, url, config);
+    const requestConfig = getRequestRuntimeConfig(config);
+    const transformedBody = await transformRequestBody(input, init, url, requestConfig);
     if (DEBUG && transformedBody !== undefined) {
       if (url.includes('/chat/completions')) {
         debugLog(`[OmniRoute] Final chat payload ${transformedBody}`);
@@ -1247,6 +1290,14 @@ function createFetchInterceptor(
     }
 
     return sanitizeAnthropicMessagesResponse(url, response);
+  };
+}
+
+function getRequestRuntimeConfig(config: OmniRouteConfig): OmniRouteConfig {
+  const liveStripOpenCodeSystemPrompt = getConfiguredStripOpenCodeSystemPromptStatus();
+  return {
+    ...config,
+    stripOpenCodeSystemPrompt: liveStripOpenCodeSystemPrompt ?? config.stripOpenCodeSystemPrompt,
   };
 }
 
@@ -1483,10 +1534,14 @@ const OMNIROUTE_CODEX_BRIDGE_PROMPT = [
   'Use tools only when necessary and keep outputs compact.',
 ].join(' ');
 const CODEX_SYSTEM_PROMPT_SIGNATURES = [
+  'You are opencode, an interactive CLI tool',
   'You are OpenCode, the best coding agent on the planet.',
   'You are OpenCode, You and the user share the same workspace',
   'You are a coding agent running in',
 ];
+const CODEX_SYSTEM_PROMPT_SIGNATURES_LOWER = CODEX_SYSTEM_PROMPT_SIGNATURES.map((prefix) =>
+  prefix.toLowerCase(),
+);
 const OPENCODE_SUBAGENT_PROMPT_RE =
   /call the task tool with subagent:\s*([a-zA-Z0-9_-]+)/i;
 
@@ -1526,6 +1581,7 @@ async function transformRequestBody(
 
   let changed = false;
   const beforeImages = countImageParts(payload);
+  changed = stripOpenCodeSystemPromptPayload(payload, config) || changed;
   changed = normalizeAnthropicMessagesPayload(payload, url, config) || changed;
   if (!url.includes('/messages')) {
     changed = normalizeReasoningPayload(payload) || changed;
@@ -2371,13 +2427,78 @@ function slimCodexPayload(payload: Record<string, unknown>): boolean {
   return changed;
 }
 
+function stripOpenCodeSystemPromptPayload(
+  payload: Record<string, unknown>,
+  config: OmniRouteConfig,
+): boolean {
+  if (config.stripOpenCodeSystemPrompt !== true) {
+    return false;
+  }
+
+  let changed = false;
+
+  if (Array.isArray(payload.messages)) {
+    const messages = payload.messages as unknown[];
+    const filtered = stripOpenCodeSystemMessages(messages);
+    if (filtered.length !== messages.length) {
+      payload.messages = filtered;
+      changed = true;
+    }
+  }
+
+  if (Array.isArray(payload.input)) {
+    const input = payload.input as unknown[];
+    const filtered = stripOpenCodeSystemMessages(input);
+    if (filtered.length !== input.length) {
+      payload.input = filtered;
+      changed = true;
+    }
+  }
+
+  if (payload.system !== undefined) {
+    delete payload.system;
+    changed = true;
+  }
+
+  if (payload.instructions !== undefined) {
+    delete payload.instructions;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function stripOpenCodeSystemMessages(messages: unknown[]): unknown[] {
+  let firstNonSystemIndex = 0;
+  while (firstNonSystemIndex < messages.length && isSystemLikeMessage(messages[firstNonSystemIndex])) {
+    firstNonSystemIndex += 1;
+  }
+
+  const withoutLeadingSystem = messages.slice(firstNonSystemIndex);
+  return withoutLeadingSystem.filter((message) => !isOpenCodeSystemMessage(message));
+}
+
+function isSystemLikeMessage(msg: unknown): boolean {
+  if (!isRecord(msg)) return false;
+  return msg.role === 'system' || msg.role === 'developer';
+}
+
 function isOpenCodeSystemMessage(msg: unknown): boolean {
   if (!isRecord(msg)) return false;
   const role = msg.role;
   const content = msg.content;
   if (role !== 'system' && role !== 'developer') return false;
-  if (typeof content !== 'string') return false;
-  return CODEX_SYSTEM_PROMPT_SIGNATURES.some((prefix) => content.startsWith(prefix));
+  return isOpenCodeSystemPromptValue(content);
+}
+
+function isOpenCodeSystemPromptValue(value: unknown): boolean {
+  const text = collectTextContent(value).join('\n').trimStart();
+  if (text === '') {
+    return false;
+  }
+
+  const normalizedText = text.toLowerCase();
+  return CODEX_SYSTEM_PROMPT_SIGNATURES_LOWER.some((prefix) => normalizedText.startsWith(prefix));
 }
 
 function slimToolDefinitions(tools: unknown[]): boolean {

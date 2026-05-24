@@ -18,6 +18,7 @@
   "include": [
     "index.ts",
     "runtime.ts",
+    "tui.ts",
     "src/**/*",
     "src/types/**/*"
   ],
