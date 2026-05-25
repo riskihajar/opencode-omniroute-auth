@@ -2,7 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.3.17] - 2026-05-25
+
+### Fixed
+
+- Fixed TUI toggle and footer status not appearing on machines that install the
+  package from npm. OpenCode 1.15.x's TUI plugin loader runs `npm install <spec>`
+  per entry, which fails with `NpmInstallFailedError` on the subpath spec
+  `@riskihajar/opencode-omniroute-auth/tui` because npm treats the slash as a
+  local path. The installer now writes the absolute path to `dist/tui.js` into
+  `tui.json` instead, and migrates any existing legacy subpath entry on the
+  next `install` run.
+
+### Verification
+
+- Verified the installer fresh install, legacy subpath migration, idempotent
+  re-run, and stale absolute path cleanup against `tui.json` fixtures.
+- Verified that `npm install @riskihajar/opencode-omniroute-auth/tui` fails
+  with `ENOENT` on the local path, and that loading
+  `@riskihajar/opencode-omniroute-auth/tui` as an ES module after a normal
+  package install resolves correctly.
 
 ## [1.3.3] - 2026-05-09
 

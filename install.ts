@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { OMNIROUTE_ENDPOINTS, OMNIROUTE_PROVIDER_ID } from './src/constants.js';
 import { getOpencodeConfigDir, getOpencodeConfigFilePath } from './src/opencode-config.js';
 
 const SERVER_PLUGIN = '@riskihajar/opencode-omniroute-auth';
-const TUI_PLUGIN = '@riskihajar/opencode-omniroute-auth/tui';
+// Legacy subpath spec. OpenCode TUI loader 1.15.x runs `npm install <spec>`
+// on this string, and npm rejects subpath specs (`@scope/pkg/sub`) with
+// ENOENT because it treats the slash as a local path. We migrate any such
+// entry to an absolute path that OpenCode can load directly.
+const LEGACY_TUI_SPEC = '@riskihajar/opencode-omniroute-auth/tui';
 const TUI_SCHEMA = 'https://opencode.ai/tui.json';
 
 type InstallResult = {
@@ -29,10 +34,36 @@ function main(): void {
   }
 
   const server = installPluginEntry(getOpencodeConfigFilePath(), SERVER_PLUGIN);
-  const tui = installTuiPluginEntry(getTuiConfigFilePath(), TUI_PLUGIN);
+  const tuiPath = resolveTuiPluginPath();
+  const tui = installTuiPluginEntry(getTuiConfigFilePath(), tuiPath);
 
   printResult(server);
   printResult(tui);
+}
+
+function resolveTuiPluginPath(): string {
+  // install.js sits at <pkg>/dist/install.js, tui.js at <pkg>/dist/tui.js.
+  const installFile = fileURLToPath(import.meta.url);
+  const tuiPath = join(dirname(installFile), 'tui.js');
+
+  if (!existsSync(tuiPath)) {
+    throw new Error(
+      `Could not locate TUI plugin entry at ${tuiPath}. ` +
+        'Ensure @riskihajar/opencode-omniroute-auth is installed correctly.',
+    );
+  }
+
+  const normalized = tuiPath.replace(/\\/g, '/');
+  if (normalized.includes('/_npx/') || normalized.includes('/_cacache/')) {
+    console.warn(
+      'opencode-omniroute-auth: warning - installer is running from an npx ' +
+        'cache. The path written to tui.json will break when the cache is ' +
+        'purged. Install globally first: ' +
+        'npm install -g @riskihajar/opencode-omniroute-auth',
+    );
+  }
+
+  return tuiPath;
 }
 
 function installPluginEntry(configPath: string, pluginName: string): InstallResult {
@@ -52,17 +83,34 @@ function installPluginEntry(configPath: string, pluginName: string): InstallResu
   };
 }
 
-function installTuiPluginEntry(configPath: string, pluginName: string): InstallResult {
+function installTuiPluginEntry(configPath: string, tuiPath: string): InstallResult {
   const config = readJsonObject(configPath);
-  let schemaChanged = false;
+  let changed = false;
+
   if (config.$schema === undefined) {
     config.$schema = TUI_SCHEMA;
-    schemaChanged = true;
+    changed = true;
   }
 
   const plugins = getOrCreatePluginArray(config, configPath);
-  const pluginChanged = addUnique(plugins, pluginName);
-  const changed = schemaChanged || pluginChanged;
+
+  // Drop any legacy or stale entries pointing at this package's TUI plugin.
+  // Covers: legacy subpath spec, and absolute paths from prior installs at
+  // a different location (e.g. older global prefix or npx cache).
+  const before = plugins.length;
+  for (let i = plugins.length - 1; i >= 0; i--) {
+    if (isStaleOmniRouteTuiEntry(plugins[i], tuiPath)) {
+      plugins.splice(i, 1);
+    }
+  }
+  if (plugins.length !== before) {
+    changed = true;
+  }
+
+  if (addUnique(plugins, tuiPath)) {
+    changed = true;
+  }
+
   if (changed) {
     writeJsonObject(configPath, config);
   }
@@ -70,8 +118,22 @@ function installTuiPluginEntry(configPath: string, pluginName: string): InstallR
   return {
     path: configPath,
     changed,
-    label: pluginName,
+    label: tuiPath,
   };
+}
+
+function isStaleOmniRouteTuiEntry(entry: string, currentAbsolutePath: string): boolean {
+  if (entry === currentAbsolutePath) {
+    return false;
+  }
+  if (entry === LEGACY_TUI_SPEC) {
+    return true;
+  }
+  const normalized = entry.replace(/\\/g, '/');
+  return (
+    normalized.includes('opencode-omniroute-auth') &&
+    normalized.endsWith('/dist/tui.js')
+  );
 }
 
 function getTuiConfigFilePath(): string {

@@ -58,6 +58,12 @@ The installer creates `opencode.json` and `tui.json` if they do not exist, appen
 plugin entries without duplicating existing ones, and adds the default
 `provider.omniroute.options` block without overwriting existing provider settings.
 
+The TUI entry is written as the absolute path to the installed `dist/tui.js`. OpenCode
+1.15.x's TUI plugin loader installs each entry through `npm install <spec>`, which fails on
+subpath specs like `@riskihajar/opencode-omniroute-auth/tui` because npm treats the slash
+as a local path. Using an absolute path skips that step and works on every platform. The
+installer also migrates any legacy subpath entry from older installs.
+
 Or add the plugin to your OpenCode config manually:
 
 ```json
@@ -394,16 +400,26 @@ Enable the server provider in `opencode.json`:
 }
 ```
 
-Enable the visual TUI extension in `tui.json`:
+Enable the visual TUI extension in `tui.json`. Use the installer:
+
+```bash
+npx @riskihajar/opencode-omniroute-auth install
+```
+
+This writes an absolute path entry, for example:
 
 ```json
 {
   "$schema": "https://opencode.ai/tui.json",
   "plugin": [
-    "@riskihajar/opencode-omniroute-auth/tui"
+    "/usr/lib/node_modules/@riskihajar/opencode-omniroute-auth/dist/tui.js"
   ]
 }
 ```
+
+Do not edit `tui.json` to use the subpath spec `@riskihajar/opencode-omniroute-auth/tui`.
+OpenCode 1.15.x's TUI loader runs `npm install <spec>` per entry, and npm cannot resolve
+subpath specs as packages.
 
 Use `ctrl+p` and select `OmniRoute system prompt: ON/OFF`, or use the TUI slash commands
 `/omniroute-system-prompt-toggle`, `/omniroute-system-prompt-on`, and
