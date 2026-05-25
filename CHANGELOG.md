@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.18] - 2026-05-25
+
+### Added
+
+- Added an interactive `install` flow that prompts for the OmniRoute base URL
+  and `apiMode`, prefilled from the existing `opencode.json`/`opencode.jsonc`
+  when present. Defaults: `http://localhost:20128/v1` and `chat`.
+- Added `--base-url`, `--api-mode`, and `-y`/`--yes` flags so the installer can
+  be run unattended in CI or scripts.
+- Added JSONC support for `opencode.jsonc` and `tui.jsonc`. The installer now
+  prefers an existing `.jsonc` file over `.json`, parses comments and trailing
+  commas, and writes the result back to the same file. A warning is printed
+  once per file when JSONC-only syntax will be lost on rewrite.
+
+### Changed
+
+- The installer now treats `baseURL` and `apiMode` as user-managed values it
+  can update (previously it only filled them in when missing).
+
+### Verification
+
+- Verified interactive mode with `expect`: accepting defaults, custom values,
+  and rejecting invalid URL/mode then retrying.
+- Verified non-interactive mode with `--base-url`/`--api-mode` flags, idempotent
+  re-run, JSONC fixtures with comments and trailing commas, and migration of
+  the legacy subpath spec inside `tui.jsonc`.
+- Verified `npm test` passes with 67 tests.
+
 ## [1.3.17] - 2026-05-25
 
 ### Fixed

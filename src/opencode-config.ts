@@ -13,8 +13,23 @@ export function getOpencodeConfigDir(): string {
   return join(homedir(), '.config', 'opencode');
 }
 
+/**
+ * Resolve the OpenCode server config path. Prefers an existing `opencode.jsonc`
+ * over `opencode.json` so users keeping their config in JSONC are not switched
+ * to plain JSON. Falls back to `opencode.json` when neither exists.
+ */
 export function getOpencodeConfigFilePath(): string {
-  return join(getOpencodeConfigDir(), 'opencode.json');
+  return resolveConfigFilePath(getOpencodeConfigDir(), 'opencode');
+}
+
+/**
+ * Resolve a config file path inside the OpenCode config directory by basename,
+ * preferring `<base>.jsonc` over `<base>.json` when both could exist.
+ */
+export function resolveConfigFilePath(dir: string, base: string): string {
+  const jsonc = join(dir, `${base}.jsonc`);
+  if (existsSync(jsonc)) return jsonc;
+  return join(dir, `${base}.json`);
 }
 
 export function readOpenCodeConfig(configPath = getOpencodeConfigFilePath()): Record<string, unknown> {
@@ -27,7 +42,7 @@ export function readOpenCodeConfig(configPath = getOpencodeConfigFilePath()): Re
     return {};
   }
 
-  const parsed = JSON.parse(raw) as unknown;
+  const parsed = parseJsonc(raw, configPath);
   if (!isRecord(parsed)) {
     throw new Error(`Expected OpenCode config to be a JSON object: ${configPath}`);
   }
@@ -45,6 +60,82 @@ export function writeOpenCodeConfig(
   }
 
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * Parse JSON with JSONC tolerance: line comments (`//`), block comments
+ * (`/* *\/`), and trailing commas. Comments inside string literals are
+ * preserved. Strict JSON inputs parse identically to `JSON.parse`.
+ */
+export function parseJsonc(input: string, sourceLabel?: string): unknown {
+  const stripped = stripJsoncSyntax(input);
+  try {
+    return JSON.parse(stripped);
+  } catch (error) {
+    const label = sourceLabel ? ` (${sourceLabel})` : '';
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse JSONC${label}: ${message}`);
+  }
+}
+
+/**
+ * Returns true if the source text contains JSONC-only syntax (comments or
+ * trailing commas). Useful for warning users that re-serialization will not
+ * preserve those constructs.
+ */
+export function hasJsoncOnlySyntax(input: string): boolean {
+  const stripped = stripJsoncSyntax(input);
+  return stripped.length !== input.length;
+}
+
+function stripJsoncSyntax(input: string): string {
+  // Single pass: walk characters, copy as-is, skip comments outside string
+  // literals. Track string boundaries with backslash-escape awareness.
+  const n = input.length;
+  let out = '';
+  let i = 0;
+
+  while (i < n) {
+    const ch = input[i];
+    const next = i + 1 < n ? input[i + 1] : '';
+
+    if (ch === '"') {
+      const start = i;
+      i++;
+      while (i < n) {
+        const c = input[i];
+        if (c === '\\' && i + 1 < n) {
+          i += 2;
+          continue;
+        }
+        if (c === '"') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      out += input.slice(start, i);
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      while (i < n && input[i] !== '\n') i++;
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < n - 1 && !(input[i] === '*' && input[i + 1] === '/')) i++;
+      i = Math.min(i + 2, n);
+      continue;
+    }
+
+    out += ch;
+    i++;
+  }
+
+  // Strip trailing commas before `]` or `}`.
+  return out.replace(/,(\s*[\]}])/g, '$1');
 }
 
 export function getStripOpenCodeSystemPromptStatus(): boolean {

@@ -5,7 +5,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { OMNIROUTE_ENDPOINTS, OMNIROUTE_PROVIDER_ID } from './src/constants.js';
-import { getOpencodeConfigDir, getOpencodeConfigFilePath } from './src/opencode-config.js';
+import {
+  getOpencodeConfigDir,
+  getOpencodeConfigFilePath,
+  hasJsoncOnlySyntax,
+  parseJsonc,
+  resolveConfigFilePath,
+} from './src/opencode-config.js';
 
 const SERVER_PLUGIN = '@riskihajar/opencode-omniroute-auth';
 // Legacy subpath spec. OpenCode TUI loader 1.15.x runs `npm install <spec>`
@@ -14,6 +20,8 @@ const SERVER_PLUGIN = '@riskihajar/opencode-omniroute-auth';
 // entry to an absolute path that OpenCode can load directly.
 const LEGACY_TUI_SPEC = '@riskihajar/opencode-omniroute-auth/tui';
 const TUI_SCHEMA = 'https://opencode.ai/tui.json';
+const SUPPORTED_API_MODES = ['chat', 'responses', 'anthropic'] as const;
+type ApiMode = (typeof SUPPORTED_API_MODES)[number];
 
 type InstallResult = {
   path: string;
@@ -21,24 +29,233 @@ type InstallResult = {
   label: string;
 };
 
-function main(): void {
-  const command = process.argv[2] ?? 'install';
+type CliArgs = {
+  command: string;
+  help: boolean;
+  yes: boolean;
+  baseUrl?: string;
+  apiMode?: ApiMode;
+};
 
-  if (command === 'help' || command === '--help' || command === '-h') {
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.help) {
     printHelp();
     return;
   }
 
-  if (command !== 'install') {
-    throw new Error(`Unknown command: ${command}. Use "install".`);
+  if (args.command !== 'install') {
+    throw new Error(`Unknown command: ${args.command}. Use "install".`);
   }
 
-  const server = installPluginEntry(getOpencodeConfigFilePath(), SERVER_PLUGIN);
+  const interactive = !args.yes && process.stdin.isTTY === true && process.stdout.isTTY === true;
+
+  const serverConfigPath = getOpencodeConfigFilePath();
+  const existingConfig = readJsonObject(serverConfigPath);
+  const existingOptions = readOmniRouteOptions(existingConfig);
+
+  const baseUrl = await resolveBaseUrl({
+    explicit: args.baseUrl,
+    current: typeof existingOptions.baseURL === 'string' ? existingOptions.baseURL : undefined,
+    interactive,
+  });
+
+  const apiMode = await resolveApiMode({
+    explicit: args.apiMode,
+    current: typeof existingOptions.apiMode === 'string' ? existingOptions.apiMode : undefined,
+    interactive,
+  });
+
+  if (interactive) {
+    console.log('');
+  }
+
+  const server = installPluginEntry(serverConfigPath, SERVER_PLUGIN, { baseUrl, apiMode });
   const tuiPath = resolveTuiPluginPath();
   const tui = installTuiPluginEntry(getTuiConfigFilePath(), tuiPath);
 
   printResult(server);
   printResult(tui);
+}
+
+function parseArgs(argv: string[]): CliArgs {
+  const result: CliArgs = { command: 'install', help: false, yes: false };
+  const positional: string[] = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+
+    if (arg === '-h' || arg === '--help' || arg === 'help') {
+      result.help = true;
+      continue;
+    }
+    if (arg === '-y' || arg === '--yes') {
+      result.yes = true;
+      continue;
+    }
+
+    const baseUrlInline = matchInlineFlag(arg, ['--base-url', '--baseURL']);
+    if (baseUrlInline !== undefined) {
+      result.baseUrl = baseUrlInline;
+      continue;
+    }
+    if (arg === '--base-url' || arg === '--baseURL') {
+      const next = argv[++i];
+      if (typeof next !== 'string') {
+        throw new Error(`${arg} requires a value`);
+      }
+      result.baseUrl = next;
+      continue;
+    }
+
+    const apiModeInline = matchInlineFlag(arg, ['--api-mode', '--apiMode']);
+    if (apiModeInline !== undefined) {
+      result.apiMode = parseApiMode(apiModeInline);
+      continue;
+    }
+    if (arg === '--api-mode' || arg === '--apiMode') {
+      const next = argv[++i];
+      if (typeof next !== 'string') {
+        throw new Error(`${arg} requires a value`);
+      }
+      result.apiMode = parseApiMode(next);
+      continue;
+    }
+
+    if (arg.startsWith('-')) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    positional.push(arg);
+  }
+
+  if (positional[0]) {
+    result.command = positional[0];
+  }
+
+  return result;
+}
+
+function matchInlineFlag(arg: string, names: string[]): string | undefined {
+  for (const name of names) {
+    const prefix = `${name}=`;
+    if (arg.startsWith(prefix)) {
+      return arg.slice(prefix.length);
+    }
+  }
+  return undefined;
+}
+
+function parseApiMode(value: string): ApiMode {
+  const normalized = value.trim().toLowerCase();
+  if (!isApiMode(normalized)) {
+    throw new Error(
+      `Invalid apiMode: ${value}. Expected one of: ${SUPPORTED_API_MODES.join(', ')}.`,
+    );
+  }
+  return normalized;
+}
+
+function isApiMode(value: string): value is ApiMode {
+  return (SUPPORTED_API_MODES as readonly string[]).includes(value);
+}
+
+async function resolveBaseUrl(input: {
+  explicit?: string;
+  current?: string;
+  interactive: boolean;
+}): Promise<string> {
+  if (input.explicit !== undefined) {
+    const error = validateBaseUrl(input.explicit);
+    if (error) {
+      throw new Error(`Invalid --base-url: ${error}`);
+    }
+    return input.explicit;
+  }
+
+  const fallback = input.current ?? OMNIROUTE_ENDPOINTS.BASE_URL;
+
+  if (!input.interactive) {
+    if (input.current === undefined) {
+      console.log(`Using default OmniRoute base URL: ${fallback}`);
+      console.log('  (run interactively or pass --base-url=<url> to change)');
+    }
+    return fallback;
+  }
+
+  console.log('OmniRoute setup');
+  console.log('  Press Enter to accept the default in [brackets].');
+  return promptWithValidation({
+    label: 'OmniRoute base URL',
+    defaultValue: fallback,
+    validate: validateBaseUrl,
+  });
+}
+
+async function resolveApiMode(input: {
+  explicit?: ApiMode;
+  current?: string;
+  interactive: boolean;
+}): Promise<ApiMode> {
+  if (input.explicit !== undefined) {
+    return input.explicit;
+  }
+
+  const currentMode = isApiMode(input.current ?? '') ? (input.current as ApiMode) : undefined;
+  const fallback: ApiMode = currentMode ?? 'chat';
+
+  if (!input.interactive) {
+    return fallback;
+  }
+
+  return promptWithValidation({
+    label: `API mode (${SUPPORTED_API_MODES.join(' / ')})`,
+    defaultValue: fallback,
+    validate: (value) =>
+      isApiMode(value.trim().toLowerCase())
+        ? undefined
+        : `must be one of: ${SUPPORTED_API_MODES.join(', ')}`,
+    transform: (value) => value.trim().toLowerCase(),
+  }) as Promise<ApiMode>;
+}
+
+async function promptWithValidation(input: {
+  label: string;
+  defaultValue: string;
+  validate: (value: string) => string | undefined;
+  transform?: (value: string) => string;
+}): Promise<string> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    while (true) {
+      const raw = (await rl.question(`  ${input.label} [${input.defaultValue}]: `)).trim();
+      const candidate = raw === '' ? input.defaultValue : raw;
+      const finalValue = input.transform ? input.transform(candidate) : candidate;
+      const error = input.validate(finalValue);
+      if (!error) {
+        return finalValue;
+      }
+      console.log(`    invalid: ${error}`);
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+function validateBaseUrl(value: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return 'not a valid URL';
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return 'protocol must be http:// or https://';
+  }
+  return undefined;
 }
 
 function resolveTuiPluginPath(): string {
@@ -66,11 +283,15 @@ function resolveTuiPluginPath(): string {
   return tuiPath;
 }
 
-function installPluginEntry(configPath: string, pluginName: string): InstallResult {
+function installPluginEntry(
+  configPath: string,
+  pluginName: string,
+  options: { baseUrl: string; apiMode: ApiMode },
+): InstallResult {
   const config = readJsonObject(configPath);
   const plugins = getOrCreatePluginArray(config, configPath);
   const pluginChanged = addUnique(plugins, pluginName);
-  const providerChanged = ensureOmniRouteProvider(config, configPath);
+  const providerChanged = ensureOmniRouteProvider(config, configPath, options);
   const changed = pluginChanged || providerChanged;
   if (changed) {
     writeJsonObject(configPath, config);
@@ -137,8 +358,10 @@ function isStaleOmniRouteTuiEntry(entry: string, currentAbsolutePath: string): b
 }
 
 function getTuiConfigFilePath(): string {
-  return join(getOpencodeConfigDir(), 'tui.json');
+  return resolveConfigFilePath(getOpencodeConfigDir(), 'tui');
 }
+
+const warnedJsoncFiles = new Set<string>();
 
 function readJsonObject(configPath: string): Record<string, unknown> {
   if (!existsSync(configPath)) {
@@ -150,7 +373,20 @@ function readJsonObject(configPath: string): Record<string, unknown> {
     return {};
   }
 
-  const parsed = JSON.parse(raw) as unknown;
+  if (
+    configPath.endsWith('.jsonc') &&
+    hasJsoncOnlySyntax(raw) &&
+    !warnedJsoncFiles.has(configPath)
+  ) {
+    warnedJsoncFiles.add(configPath);
+    console.warn(
+      `opencode-omniroute-auth: warning - ${configPath} contains comments or ` +
+        'trailing commas; the installer will rewrite the file as plain JSON ' +
+        '(comments will be lost).',
+    );
+  }
+
+  const parsed = parseJsonc(raw, configPath);
   if (!isRecord(parsed)) {
     throw new Error(`Expected JSON object in ${configPath}`);
   }
@@ -179,7 +415,18 @@ function getOrCreatePluginArray(config: Record<string, unknown>, configPath: str
   return config.plugin;
 }
 
-function ensureOmniRouteProvider(config: Record<string, unknown>, configPath: string): boolean {
+function readOmniRouteOptions(config: Record<string, unknown>): Record<string, unknown> {
+  if (!isRecord(config.provider)) return {};
+  const provider = config.provider[OMNIROUTE_PROVIDER_ID];
+  if (!isRecord(provider) || !isRecord(provider.options)) return {};
+  return provider.options;
+}
+
+function ensureOmniRouteProvider(
+  config: Record<string, unknown>,
+  configPath: string,
+  desired: { baseUrl: string; apiMode: ApiMode },
+): boolean {
   let changed = false;
 
   if (config.provider === undefined) {
@@ -216,13 +463,13 @@ function ensureOmniRouteProvider(config: Record<string, unknown>, configPath: st
   }
 
   const options = provider.options;
-  if (options.baseURL === undefined) {
-    options.baseURL = OMNIROUTE_ENDPOINTS.BASE_URL;
+  if (options.baseURL !== desired.baseUrl) {
+    options.baseURL = desired.baseUrl;
     changed = true;
   }
 
-  if (options.apiMode === undefined) {
-    options.apiMode = 'chat';
+  if (options.apiMode !== desired.apiMode) {
+    options.apiMode = desired.apiMode;
     changed = true;
   }
 
@@ -239,25 +486,33 @@ function addUnique(values: string[], value: string): boolean {
 }
 
 function printResult(result: InstallResult): void {
-  const status = result.changed ? 'added' : 'already present';
+  const status = result.changed ? 'updated' : 'already present';
   console.log(`${status}: ${result.label}`);
   console.log(`  ${result.path}`);
 }
 
 function printHelp(): void {
-  console.log('Usage: opencode-omniroute-auth install');
+  console.log('Usage: opencode-omniroute-auth install [options]');
   console.log('');
   console.log('Adds OmniRoute server provider and TUI plugin to OpenCode config files.');
+  console.log('Prompts for the OmniRoute base URL when run on a TTY.');
+  console.log('');
+  console.log('Options:');
+  console.log('  --base-url <url>     Set OmniRoute base URL non-interactively');
+  console.log('  --api-mode <mode>    Set OmniRoute apiMode (chat, responses, anthropic)');
+  console.log('  -y, --yes            Skip prompts and use existing values or defaults');
+  console.log('  -h, --help           Show this help');
+  console.log('');
+  console.log('Defaults are taken from your existing opencode.json when present,');
+  console.log(`otherwise: ${OMNIROUTE_ENDPOINTS.BASE_URL} (chat).`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`opencode-omniroute-auth: ${message}`);
   process.exitCode = 1;
-}
+});

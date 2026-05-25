@@ -54,9 +54,22 @@ Then install the OpenCode server and TUI entries:
 npx @riskihajar/opencode-omniroute-auth install
 ```
 
+The installer prompts for the OmniRoute `baseURL` and `apiMode`, prefilled from your
+existing `opencode.json` (or `opencode.jsonc`) when present. Press Enter to accept the
+defaults (`http://localhost:20128/v1` and `chat`). For unattended setups:
+
+```bash
+npx @riskihajar/opencode-omniroute-auth install \
+  --base-url=http://192.168.1.10:20128/v1 \
+  --api-mode=responses
+# or accept whatever is already configured
+npx @riskihajar/opencode-omniroute-auth install --yes
+```
+
 The installer creates `opencode.json` and `tui.json` if they do not exist, appends missing
-plugin entries without duplicating existing ones, and adds the default
-`provider.omniroute.options` block without overwriting existing provider settings.
+plugin entries without duplicating existing ones, and updates `provider.omniroute.options`
+with the values you confirmed. It detects `opencode.jsonc` / `tui.jsonc` and rewrites the
+same file (note: comments are dropped on rewrite; the installer warns when this happens).
 
 The TUI entry is written as the absolute path to the installed `dist/tui.js`. OpenCode
 1.15.x's TUI plugin loader installs each entry through `npm install <spec>`, which fails on
