@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { OMNIROUTE_PROVIDER_ID } from './constants.js';
+import { DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT, OMNIROUTE_PROVIDER_ID } from './constants.js';
 
 export function getOpencodeConfigDir(): string {
   const overridden = process.env.OPENCODE_CONFIG_DIR;
@@ -139,7 +139,7 @@ function stripJsoncSyntax(input: string): string {
 }
 
 export function getStripOpenCodeSystemPromptStatus(): boolean {
-  return getConfiguredStripOpenCodeSystemPromptStatus() === true;
+  return getConfiguredStripOpenCodeSystemPromptStatus() ?? DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT;
 }
 
 export function getConfiguredStripOpenCodeSystemPromptStatus(): boolean | undefined {

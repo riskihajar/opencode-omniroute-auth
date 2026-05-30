@@ -14,6 +14,7 @@ import type {
   OmniRouteProviderModel,
 } from './types.js';
 import {
+  DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT,
   OMNIROUTE_PROVIDER_ID,
   OMNIROUTE_DEFAULT_MODELS,
   OMNIROUTE_ENDPOINTS,
@@ -134,6 +135,9 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           baseURL: baseUrl,
           url: providerUrl,
           apiMode,
+          stripOpenCodeSystemPrompt:
+            existingProvider?.options?.stripOpenCodeSystemPrompt ??
+            DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT,
           modelMetadata: configuredModelMetadata,
         },
         models: toProviderModels(
@@ -361,7 +365,9 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   const refreshOnList = getBoolean(provider.options, 'refreshOnList');
   const enableCombos = getBoolean(provider.options, 'enableCombos');
   const enableFullGpt55Context = getBoolean(provider.options, 'enableFullGpt55Context');
-  const stripOpenCodeSystemPrompt = getBoolean(provider.options, 'stripOpenCodeSystemPrompt');
+  const stripOpenCodeSystemPrompt =
+    getBoolean(provider.options, 'stripOpenCodeSystemPrompt') ??
+    DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT;
   const modelsDev = getModelsDevConfig(provider.options);
   const modelMetadata = getModelMetadataConfig(provider.options);
 

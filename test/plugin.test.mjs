@@ -83,7 +83,7 @@ test('tui plugin exposes status footer and toggles system prompt config', async 
   });
 
   assert.equal(typeof registered.slots.home_footer, 'function');
-  assert.match(registered.slots.home_footer(), /OFF$/);
+  assert.match(registered.slots.home_footer(), /ON$/);
 
   const toggleCommand = registered.commands.find(
     (command) => command.value === 'omniroute-system-prompt-toggle',
@@ -91,8 +91,8 @@ test('tui plugin exposes status footer and toggles system prompt config', async 
   assert.equal(typeof toggleCommand.onSelect, 'function');
   toggleCommand.onSelect();
 
-  assert.match(registered.slots.home_footer(), /ON$/);
-  assert.deepEqual(toasts, ['OpenCode system prompt stripping enabled']);
+  assert.match(registered.slots.home_footer(), /OFF$/);
+  assert.deepEqual(toasts, ['OpenCode system prompt stripping disabled']);
 
   await rm(configDir, { recursive: true, force: true });
 });
@@ -134,6 +134,7 @@ test('config hook applies defaults and normalized apiMode', async () => {
   assert.equal(config.provider.omniroute.api, 'http://localhost:20128/v1');
   assert.equal(config.provider.omniroute.options.apiMode, 'chat');
   assert.equal(config.provider.omniroute.options.baseURL, 'http://localhost:20128/v1');
+  assert.equal(config.provider.omniroute.options.stripOpenCodeSystemPrompt, true);
   assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
   assert.equal(config.provider.omniroute.options.url, 'http://localhost:20128/v1');
 });
@@ -1297,6 +1298,7 @@ test('loader adds Anthropic-compatible API key header for messages endpoint', as
     options: {
       baseURL: 'http://localhost:20128/v1',
       apiMode: 'anthropic',
+      stripOpenCodeSystemPrompt: false,
     },
     models: {},
   };
@@ -1592,6 +1594,7 @@ test('loader preserves OpenCode system prompt unless stripping is enabled', asyn
     options: {
       baseURL: 'http://localhost:20128/v1',
       apiMode: 'anthropic',
+      stripOpenCodeSystemPrompt: false,
     },
     models: {},
   };
@@ -1682,7 +1685,7 @@ test('loader reads OpenCode system prompt strip toggle on each request', async (
     command: {
       register: (factory) => {
         const toggleCommand = factory().find(
-          (command) => command.value === 'omniroute-system-prompt-toggle',
+          (command) => command.value === 'omniroute-system-prompt-on',
         );
         toggleCommand.onSelect();
         return () => {};

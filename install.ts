@@ -4,7 +4,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { OMNIROUTE_ENDPOINTS, OMNIROUTE_PROVIDER_ID } from './src/constants.js';
+import {
+  DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT,
+  OMNIROUTE_ENDPOINTS,
+  OMNIROUTE_PROVIDER_ID,
+} from './src/constants.js';
 import {
   getOpencodeConfigDir,
   getOpencodeConfigFilePath,
@@ -473,6 +477,11 @@ function ensureOmniRouteProvider(
     changed = true;
   }
 
+  if (options.stripOpenCodeSystemPrompt === undefined) {
+    options.stripOpenCodeSystemPrompt = DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT;
+    changed = true;
+  }
+
   return changed;
 }
 
@@ -504,7 +513,9 @@ function printHelp(): void {
   console.log('  -h, --help           Show this help');
   console.log('');
   console.log('Defaults are taken from your existing opencode.json when present,');
-  console.log(`otherwise: ${OMNIROUTE_ENDPOINTS.BASE_URL} (chat).`);
+  console.log(
+    `otherwise: ${OMNIROUTE_ENDPOINTS.BASE_URL} (chat, strip OpenCode prompt enabled).`,
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

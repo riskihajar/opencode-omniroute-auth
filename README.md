@@ -56,7 +56,8 @@ npx @riskihajar/opencode-omniroute-auth install
 
 The installer prompts for the OmniRoute `baseURL` and `apiMode`, prefilled from your
 existing `opencode.json` (or `opencode.jsonc`) when present. Press Enter to accept the
-defaults (`http://localhost:20128/v1` and `chat`). For unattended setups:
+defaults (`http://localhost:20128/v1`, `chat`, and OpenCode system prompt stripping
+enabled). For unattended setups:
 
 ```bash
 npx @riskihajar/opencode-omniroute-auth install \
@@ -384,7 +385,7 @@ When enabled, the plugin calculates capabilities conservatively from backing mod
 | `baseURL` | `string` | `http://localhost:20128/v1` | OmniRoute base URL. |
 | `apiMode` | `chat` \| `responses` \| `anthropic` | `chat` | Global runtime mode. |
 | `anthropicToolChoice` | `auto` \| `composer-any` \| `any` | `composer-any` | Anthropic tool-choice policy. |
-| `stripOpenCodeSystemPrompt` | `boolean` | `false` | Remove OpenCode's built-in system prompt before forwarding. |
+| `stripOpenCodeSystemPrompt` | `boolean` | `true` | Remove OpenCode's built-in system prompt before forwarding. |
 | `refreshOnList` | `boolean` | `true` | Refresh models when provider is loaded. |
 | `modelCacheTtl` | `number` | package default | Model cache TTL in milliseconds. |
 | `modelsDev` | `object` | enabled defaults | Configure `models.dev` enrichment. |

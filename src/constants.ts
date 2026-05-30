@@ -18,6 +18,11 @@ export const OMNIROUTE_ENDPOINTS = {
 };
 
 /**
+ * Default policy for forwarding OpenCode's built-in system prompt.
+ */
+export const DEFAULT_STRIP_OPENCODE_SYSTEM_PROMPT = true;
+
+/**
  * Default models to use as fallback when /v1/models fails
  */
 export const OMNIROUTE_DEFAULT_MODELS = [
