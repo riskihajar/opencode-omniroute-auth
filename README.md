@@ -72,10 +72,9 @@ plugin entries without duplicating existing ones, and updates `provider.omnirout
 with the values you confirmed. It detects `opencode.jsonc` / `tui.jsonc` and rewrites the
 same file (note: comments are dropped on rewrite; the installer warns when this happens).
 
-The TUI entry is written as the absolute path to the installed `dist/tui.js`. OpenCode
-1.15.x's TUI plugin loader installs each entry through `npm install <spec>`, which fails on
-subpath specs like `@riskihajar/opencode-omniroute-auth/tui` because npm treats the slash
-as a local path. Using an absolute path skips that step and works on every platform. The
+The TUI entry is written as an absolute path to `dist/tui.js`. When the installer is run
+through `npx`, it first installs the TUI package into a persistent OpenCode config
+subdirectory, so the generated `tui.json` does not point at a temporary npx cache. The
 installer also migrates any legacy subpath entry from older installs.
 
 Or add the plugin to your OpenCode config manually:
@@ -420,7 +419,9 @@ Enable the visual TUI extension in `tui.json`. Use the installer:
 npx @riskihajar/opencode-omniroute-auth install
 ```
 
-This writes an absolute path entry, for example:
+This writes an absolute path entry. For a global install it points at the global package;
+for `npx` it points at the persistent package copy under your OpenCode config directory.
+Example:
 
 ```json
 {

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,7 @@ const SERVER_PLUGIN = '@riskihajar/opencode-omniroute-auth';
 // entry to an absolute path that OpenCode can load directly.
 const LEGACY_TUI_SPEC = '@riskihajar/opencode-omniroute-auth/tui';
 const TUI_SCHEMA = 'https://opencode.ai/tui.json';
+const PERSISTENT_TUI_INSTALL_DIR = 'omniroute-tui-plugin';
 const SUPPORTED_API_MODES = ['chat', 'responses', 'anthropic'] as const;
 type ApiMode = (typeof SUPPORTED_API_MODES)[number];
 
@@ -276,15 +278,59 @@ function resolveTuiPluginPath(): string {
 
   const normalized = tuiPath.replace(/\\/g, '/');
   if (normalized.includes('/_npx/') || normalized.includes('/_cacache/')) {
-    console.warn(
-      'opencode-omniroute-auth: warning - installer is running from an npx ' +
-        'cache. The path written to tui.json will break when the cache is ' +
-        'purged. Install globally first: ' +
-        'npm install -g @riskihajar/opencode-omniroute-auth',
-    );
+    return installPersistentTuiPackage();
   }
 
   return tuiPath;
+}
+
+function installPersistentTuiPackage(): string {
+  const version = getPackageVersion();
+  const installDir = join(getOpencodeConfigDir(), PERSISTENT_TUI_INSTALL_DIR);
+  const packageSpec = `${SERVER_PLUGIN}@${version}`;
+
+  mkdirSync(installDir, { recursive: true });
+  console.log(`Installing persistent OmniRoute TUI plugin: ${packageSpec}`);
+  execFileSync(
+    'npm',
+    [
+      'install',
+      '--prefix',
+      installDir,
+      '--no-save',
+      '--omit=dev',
+      '--silent',
+      packageSpec,
+    ],
+    {
+      stdio: 'inherit',
+    },
+  );
+
+  const tuiPath = join(
+    installDir,
+    'node_modules',
+    '@riskihajar',
+    'opencode-omniroute-auth',
+    'dist',
+    'tui.js',
+  );
+
+  if (!existsSync(tuiPath)) {
+    throw new Error(`Persistent TUI plugin install did not create ${tuiPath}`);
+  }
+
+  return tuiPath;
+}
+
+function getPackageVersion(): string {
+  const installFile = fileURLToPath(import.meta.url);
+  const packageJsonPath = join(dirname(installFile), '..', 'package.json');
+  const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as unknown;
+  if (!isRecord(parsed) || typeof parsed.version !== 'string') {
+    throw new Error(`Could not read package version from ${packageJsonPath}`);
+  }
+  return parsed.version;
 }
 
 function installPluginEntry(
@@ -321,7 +367,7 @@ function installTuiPluginEntry(configPath: string, tuiPath: string): InstallResu
 
   // Drop any legacy or stale entries pointing at this package's TUI plugin.
   // Covers: legacy subpath spec, and absolute paths from prior installs at
-  // a different location (e.g. older global prefix or npx cache).
+  // a different location (e.g. older global prefix, npx cache, or persistent install).
   const before = plugins.length;
   for (let i = plugins.length - 1; i >= 0; i--) {
     if (isStaleOmniRouteTuiEntry(plugins[i], tuiPath)) {
