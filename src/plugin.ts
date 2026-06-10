@@ -944,7 +944,7 @@ function toProviderModel(
 
   return {
     id: model.id,
-    name: model.name || model.id,
+    name: model.id,
     providerID: OMNIROUTE_PROVIDER_ID,
     family: getModelFamily(model.id),
     release_date: '',

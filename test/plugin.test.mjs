@@ -441,6 +441,7 @@ test('loader clamps Codex GPT-5.5 routed limits to a realistic Plus-tier budget'
         data: [
           {
             id: 'codex/gpt-5.5',
+            name: 'GPT 5.5',
             context_length: 1050000,
             max_input_tokens: 1050000,
             max_output_tokens: 128000,
@@ -478,6 +479,7 @@ test('loader clamps Codex GPT-5.5 routed limits to a realistic Plus-tier budget'
 
   await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
 
+  assert.equal(provider.models['codex/gpt-5.5'].name, 'codex/gpt-5.5');
   assert.deepEqual(provider.models['codex/gpt-5.5'].limit, {
     context: 400000,
     input: 272000,
