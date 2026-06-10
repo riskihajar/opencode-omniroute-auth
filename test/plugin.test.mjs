@@ -873,6 +873,71 @@ test('responses mode generates xhigh variant for GPT-5.5 routed models', async (
   });
 });
 
+test('responses mode keeps openai-compatible-chat routed GPT-5.5 on chat-safe options', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'gccoa/gpt-5.5',
+            name: 'gpt-5.5',
+            owned_by: 'openai-compatible-chat-5c9bef01-a13e-4089-a23c-f4b305491ede',
+            root: 'gpt-5.5',
+            capabilities: {
+              vision: true,
+              tool_calling: true,
+              reasoning: true,
+            },
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+            context_length: 1050000,
+            max_input_tokens: 1050000,
+            max_output_tokens: 128000,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://models.dev/api.json') {
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'responses',
+    },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  const model = provider.models['gccoa/gpt-5.5'];
+  assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
+  assert.equal(model.capabilities.reasoning, false);
+  assert.deepEqual(model.variants, {});
+
+  const paramsOutput = { maxOutputTokens: 1024, options: {} };
+  assert.strictEqual(
+    plugin['chat.params']({ model, sessionID: 'session-123' }, paramsOutput),
+    paramsOutput,
+  );
+});
+
 test('resetEmbeddedReasoningVariant restores generated variants for embedded high suffix models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   global.fetch = createEmptyOmniRouteFetch();
@@ -2548,6 +2613,61 @@ test('chat payload strips unsupported reasoning summary aliases', async () => {
   assert.equal(forwardedBody.textVerbosity, 'medium');
   assert.equal(forwardedBody.reasoningEffort, undefined);
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
+});
+
+test('chat payload strips OpenAI progress fields for non-Codex compatible chat models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'gccoa/gpt-5.5',
+      messages: [{ role: 'user', content: 'test' }],
+      reasoningEffort: 'high',
+      reasoning: { effort: 'high' },
+      textVerbosity: 'medium',
+      verbosity: 'medium',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningEffort, undefined);
+  assert.equal(forwardedBody.reasoning, undefined);
+  assert.equal(forwardedBody.textVerbosity, undefined);
+  assert.equal(forwardedBody.verbosity, undefined);
 });
 
 test('chat payload converts input-shaped bodies into messages', async () => {

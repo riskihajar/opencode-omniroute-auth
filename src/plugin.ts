@@ -30,6 +30,7 @@ import {
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai';
+const OMNIROUTE_OPENAI_COMPATIBLE_CHAT_PROVIDER_NPM = '@ai-sdk/openai-compatible';
 const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/openai';
 const OMNIROUTE_ANTHROPIC_PROVIDER_NPM = '@ai-sdk/anthropic';
 const OMNIROUTE_ANTHROPIC_BETA_HEADER =
@@ -496,9 +497,13 @@ function isApiMode(value: unknown): value is OmniRouteApiMode {
   return value === 'chat' || value === 'responses' || value === 'anthropic';
 }
 
-function getProviderNpm(apiMode: OmniRouteApiMode): string {
+function getProviderNpm(apiMode: OmniRouteApiMode, model?: OmniRouteModel): string {
   if (apiMode === 'anthropic') {
     return OMNIROUTE_ANTHROPIC_PROVIDER_NPM;
+  }
+
+  if (apiMode === 'chat' && usesOpenAiCompatibleChatRuntime(model?.owned_by)) {
+    return OMNIROUTE_OPENAI_COMPATIBLE_CHAT_PROVIDER_NPM;
   }
 
   return apiMode === 'responses'
@@ -516,6 +521,10 @@ function getEffectiveApiModeForModel(
 
   if (usesAnthropicMessagesRuntime(model.id, model.root, model.owned_by)) {
     return 'anthropic';
+  }
+
+  if (usesOpenAiCompatibleChatRuntime(model.owned_by)) {
+    return 'chat';
   }
 
   if (requestedApiMode !== 'responses') {
@@ -542,6 +551,10 @@ function isAnthropicFamilyModel(modelId: string, root?: string, ownedBy?: string
 
 function usesAnthropicMessagesRuntime(modelId: string, root?: string, ownedBy?: string): boolean {
   return isAnthropicFamilyModel(modelId, root, ownedBy) || isCursorComposerModel(modelId, root);
+}
+
+function usesOpenAiCompatibleChatRuntime(ownedBy?: string): boolean {
+  return typeof ownedBy === 'string' && ownedBy.toLowerCase().startsWith('openai-compatible-chat');
 }
 
 function isCursorComposerModel(modelId: string, root?: string): boolean {
@@ -936,7 +949,7 @@ function toProviderModel(
   );
   const variants = getVariants(effectiveModel, reasoning, apiMode);
   const providerUrl = getProviderUrl(baseUrl, apiMode);
-  const providerNpm = getProviderNpm(apiMode);
+  const providerNpm = getProviderNpm(apiMode, effectiveModel);
   const options =
     embeddedVariant && apiMode !== 'anthropic'
       ? getReasoningVariantOptions(embeddedVariant, apiMode)
@@ -1032,6 +1045,10 @@ function getProviderModelReasoningSupport(
     return configured.reasoning;
   }
 
+  if (apiMode === 'chat' && usesOpenAiCompatibleChatRuntime(model.owned_by)) {
+    return false;
+  }
+
   return getReasoningSupport(model, config);
 }
 
@@ -1049,9 +1066,24 @@ function supportsLikelyVisionInput(modelId: string): boolean {
 
 function isOpenAiCodexLikeModel(modelId: string): boolean {
   const id = modelId.toLowerCase();
-  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?(?:$|[-_/])|(^|[-_/])o[34](?:$|[-_/])/.test(
+  const providerKey = getProviderKey(id);
+
+  if (providerKey && providerKey !== 'codex' && providerKey !== 'cx' && providerKey !== 'openai') {
+    return false;
+  }
+
+  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|^gpt-5(\.[0-9]+)?(?:$|[-_/])|^o[34](?:$|[-_/])/.test(
     id,
   );
+}
+
+function getProviderKey(modelId: string): string | null {
+  const parts = modelId.split('/');
+  if (parts.length < 2) {
+    return null;
+  }
+
+  return parts[0] ?? null;
 }
 
 function getVariants(
@@ -1065,6 +1097,7 @@ function getVariants(
     : (['low', 'medium', 'high'] as const);
   const shouldGenerateReasoningVariants =
     apiMode !== 'anthropic' &&
+    !usesOpenAiCompatibleChatRuntime(model.owned_by) &&
     (reasoning || supportsWidelySupportedEfforts) &&
     !hasEmbeddedReasoningVariant(model);
 
@@ -1204,7 +1237,7 @@ function getModelLimits(model: OmniRouteModel): { context: number; input?: numbe
   const explicitInput = model.maxInputTokens;
   const explicitOutput = model.maxTokens;
   const modelId = model.id.toLowerCase();
-  const codexLike = /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$|(^|[-_/])o[34](?:$|[-_/])/.test(modelId);
+  const codexLike = isOpenAiCodexLikeModel(modelId);
 
   if (codexLike) {
     const context = explicitContext ?? 256000;
@@ -2039,7 +2072,28 @@ function normalizeChatPayload(payload: Record<string, unknown>, url: string): bo
     changed = true;
   }
 
+  if (!isOpenAiCodexLikePayloadModel(payload.model)) {
+    if (payload.reasoning !== undefined) {
+      delete payload.reasoning;
+      changed = true;
+    }
+
+    if (payload.textVerbosity !== undefined) {
+      delete payload.textVerbosity;
+      changed = true;
+    }
+
+    if (payload.verbosity !== undefined) {
+      delete payload.verbosity;
+      changed = true;
+    }
+  }
+
   return changed;
+}
+
+function isOpenAiCodexLikePayloadModel(model: unknown): boolean {
+  return typeof model === 'string' && isOpenAiCodexLikeModel(model);
 }
 
 function normalizeChatMessagesFromInput(input: unknown): unknown[] {
@@ -2384,8 +2438,7 @@ function normalizeReasoningPayload(payload: Record<string, unknown>): boolean {
 
 function slimCodexPayload(payload: Record<string, unknown>): boolean {
   const model = typeof payload.model === 'string' ? payload.model.toLowerCase() : '';
-  const codexLike = /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$/.test(model);
-  if (!codexLike) {
+  if (!isOpenAiCodexLikeModel(model)) {
     return false;
   }
 
