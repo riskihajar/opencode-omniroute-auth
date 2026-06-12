@@ -873,7 +873,7 @@ test('responses mode generates xhigh variant for GPT-5.5 routed models', async (
   });
 });
 
-test('responses mode keeps openai-compatible-chat routed GPT-5.5 on chat-safe options', async () => {
+test('responses mode exposes reasoning variants for openai-compatible-chat routed GPT-5.5', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 
   global.fetch = async (input) => {
@@ -928,8 +928,13 @@ test('responses mode keeps openai-compatible-chat routed GPT-5.5 on chat-safe op
 
   const model = provider.models['gccoa/gpt-5.5'];
   assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
-  assert.equal(model.capabilities.reasoning, false);
-  assert.deepEqual(model.variants, {});
+  assert.equal(model.capabilities.reasoning, true);
+  assert.deepEqual(model.variants, {
+    low: { reasoningEffort: 'low' },
+    medium: { reasoningEffort: 'medium' },
+    high: { reasoningEffort: 'high' },
+    xhigh: { reasoningEffort: 'xhigh' },
+  });
 
   const paramsOutput = { maxOutputTokens: 1024, options: {} };
   assert.strictEqual(
@@ -2615,7 +2620,7 @@ test('chat payload strips unsupported reasoning summary aliases', async () => {
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
 });
 
-test('chat payload strips OpenAI progress fields for non-Codex compatible chat models', async () => {
+test('chat payload keeps OpenAI reasoning fields for gccoa compatible chat models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;
 
@@ -2665,9 +2670,9 @@ test('chat payload strips OpenAI progress fields for non-Codex compatible chat m
 
   assert.ok(forwardedBody);
   assert.equal(forwardedBody.reasoningEffort, undefined);
-  assert.equal(forwardedBody.reasoning, undefined);
-  assert.equal(forwardedBody.textVerbosity, undefined);
-  assert.equal(forwardedBody.verbosity, undefined);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
+  assert.equal(forwardedBody.textVerbosity, 'medium');
+  assert.equal(forwardedBody.verbosity, 'medium');
 });
 
 test('chat payload converts input-shaped bodies into messages', async () => {

@@ -1045,7 +1045,11 @@ function getProviderModelReasoningSupport(
     return configured.reasoning;
   }
 
-  if (apiMode === 'chat' && usesOpenAiCompatibleChatRuntime(model.owned_by)) {
+  if (
+    apiMode === 'chat' &&
+    usesOpenAiCompatibleChatRuntime(model.owned_by) &&
+    !supportsWidelySupportedReasoningEfforts(model.id)
+  ) {
     return false;
   }
 
@@ -1068,11 +1072,17 @@ function isOpenAiCodexLikeModel(modelId: string): boolean {
   const id = modelId.toLowerCase();
   const providerKey = getProviderKey(id);
 
-  if (providerKey && providerKey !== 'codex' && providerKey !== 'cx' && providerKey !== 'openai') {
+  if (
+    providerKey &&
+    providerKey !== 'codex' &&
+    providerKey !== 'cx' &&
+    providerKey !== 'openai' &&
+    providerKey !== 'gccoa'
+  ) {
     return false;
   }
 
-  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|^gpt-5(\.[0-9]+)?(?:$|[-_/])|^o[34](?:$|[-_/])/.test(
+  return /(^|\/)(codex|cx|gccoa)\/gpt-5|gpt-5(\.[0-9]+)?-codex|^gpt-5(\.[0-9]+)?(?:$|[-_/])|^o[34](?:$|[-_/])/.test(
     id,
   );
 }
@@ -1097,7 +1107,6 @@ function getVariants(
     : (['low', 'medium', 'high'] as const);
   const shouldGenerateReasoningVariants =
     apiMode !== 'anthropic' &&
-    !usesOpenAiCompatibleChatRuntime(model.owned_by) &&
     (reasoning || supportsWidelySupportedEfforts) &&
     !hasEmbeddedReasoningVariant(model);
 
