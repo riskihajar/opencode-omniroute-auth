@@ -2064,6 +2064,9 @@ function normalizeChatPayload(payload: Record<string, unknown>, url: string): bo
   }
 
   let changed = false;
+  const model = typeof payload.model === 'string' ? payload.model : '';
+  const keepReasoning = isOpenAiCodexLikeModel(model);
+  const keepVerbosity = keepReasoning && !isGccoaModel(model);
 
   if (payload.input !== undefined && payload.messages === undefined) {
     payload.messages = normalizeChatMessagesFromInput(payload.input);
@@ -2081,28 +2084,28 @@ function normalizeChatPayload(payload: Record<string, unknown>, url: string): bo
     changed = true;
   }
 
-  if (!isOpenAiCodexLikePayloadModel(payload.model)) {
+  if (!keepReasoning) {
     if (payload.reasoning !== undefined) {
       delete payload.reasoning;
       changed = true;
     }
+  }
 
-    if (payload.textVerbosity !== undefined) {
-      delete payload.textVerbosity;
-      changed = true;
-    }
+  if (!keepVerbosity && payload.textVerbosity !== undefined) {
+    delete payload.textVerbosity;
+    changed = true;
+  }
 
-    if (payload.verbosity !== undefined) {
-      delete payload.verbosity;
-      changed = true;
-    }
+  if (!keepVerbosity && payload.verbosity !== undefined) {
+    delete payload.verbosity;
+    changed = true;
   }
 
   return changed;
 }
 
-function isOpenAiCodexLikePayloadModel(model: unknown): boolean {
-  return typeof model === 'string' && isOpenAiCodexLikeModel(model);
+function isGccoaModel(modelId: string): boolean {
+  return getProviderKey(modelId.toLowerCase()) === 'gccoa';
 }
 
 function normalizeChatMessagesFromInput(input: unknown): unknown[] {

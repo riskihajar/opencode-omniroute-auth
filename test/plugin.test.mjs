@@ -2620,7 +2620,7 @@ test('chat payload strips unsupported reasoning summary aliases', async () => {
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
 });
 
-test('chat payload keeps OpenAI reasoning fields for gccoa compatible chat models', async () => {
+test('chat payload keeps reasoning but strips verbosity for gccoa compatible chat models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;
 
@@ -2671,8 +2671,8 @@ test('chat payload keeps OpenAI reasoning fields for gccoa compatible chat model
   assert.ok(forwardedBody);
   assert.equal(forwardedBody.reasoningEffort, undefined);
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
-  assert.equal(forwardedBody.textVerbosity, 'medium');
-  assert.equal(forwardedBody.verbosity, 'medium');
+  assert.equal(forwardedBody.textVerbosity, undefined);
+  assert.equal(forwardedBody.verbosity, undefined);
 });
 
 test('chat payload converts input-shaped bodies into messages', async () => {
