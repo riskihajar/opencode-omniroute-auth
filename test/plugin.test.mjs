@@ -943,6 +943,69 @@ test('responses mode exposes reasoning variants for openai-compatible-chat route
   );
 });
 
+test('responses mode detects OpenAI reasoning models behind dynamic provider prefixes', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'sa/slashai/gpt-5.5',
+            name: 'slashai/gpt-5.5',
+            owned_by: 'openai-compatible-chat-slashai',
+            root: 'gpt-5.5',
+            capabilities: {
+              vision: true,
+              tool_calling: true,
+              reasoning: true,
+            },
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+            context_length: 256000,
+            max_output_tokens: 32000,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://models.dev/api.json') {
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'responses',
+    },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  const model = provider.models['sa/slashai/gpt-5.5'];
+  assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
+  assert.equal(model.capabilities.reasoning, true);
+  assert.deepEqual(model.variants, {
+    low: { reasoningEffort: 'low' },
+    medium: { reasoningEffort: 'medium' },
+    high: { reasoningEffort: 'high' },
+    xhigh: { reasoningEffort: 'xhigh' },
+  });
+});
+
 test('resetEmbeddedReasoningVariant restores generated variants for embedded high suffix models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   global.fetch = createEmptyOmniRouteFetch();
@@ -2672,6 +2735,59 @@ test('chat payload keeps reasoning but strips verbosity for gccoa compatible cha
   assert.equal(forwardedBody.reasoningEffort, undefined);
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
   assert.equal(forwardedBody.textVerbosity, undefined);
+  assert.equal(forwardedBody.verbosity, undefined);
+});
+
+test('chat payload keeps reasoning for OpenAI models behind dynamic provider prefixes', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'sa/slashai/gpt-5.5',
+      messages: [{ role: 'user', content: 'test' }],
+      reasoningEffort: 'high',
+      reasoning: { effort: 'high' },
+      verbosity: 'medium',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningEffort, undefined);
+  assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
   assert.equal(forwardedBody.verbosity, undefined);
 });
 

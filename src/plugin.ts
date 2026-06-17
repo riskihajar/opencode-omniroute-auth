@@ -1025,9 +1025,7 @@ function getReasoningSupport(model: OmniRouteModel, config?: OmniRouteConfig): b
     return model.reasoning;
   }
 
-  const modelId = model.id.toLowerCase();
-
-  return /(^|\/)(gpt-5|o3|o4)|codex\/gpt-5|cx\/gpt-5/.test(modelId);
+  return isOpenAiReasoningModel(model.id);
 }
 
 function getProviderModelReasoningSupport(
@@ -1048,7 +1046,7 @@ function getProviderModelReasoningSupport(
   if (
     apiMode === 'chat' &&
     usesOpenAiCompatibleChatRuntime(model.owned_by) &&
-    !supportsWidelySupportedReasoningEfforts(model.id)
+    !isOpenAiReasoningModel(model.id)
   ) {
     return false;
   }
@@ -1063,7 +1061,13 @@ function supportsWidelySupportedReasoningEfforts(modelId: string): boolean {
 }
 
 function supportsLikelyVisionInput(modelId: string): boolean {
-  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?$|(^|[-_/])o[34](?:$|[-_/])/.test(
+  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|(^|\/)gpt-5(\.[0-9]+)?(?:$|[-_/])|(^|[-_/])o[34](?:$|[-_/])/.test(
+    modelId.toLowerCase(),
+  );
+}
+
+function isOpenAiReasoningModel(modelId: string): boolean {
+  return /(^|[-_/])(gpt-5(?:\.[0-9]+)?|o[34])(?:$|[-_/])|gpt-5(\.[0-9]+)?-codex/.test(
     modelId.toLowerCase(),
   );
 }
@@ -1076,13 +1080,12 @@ function isOpenAiCodexLikeModel(modelId: string): boolean {
     providerKey &&
     providerKey !== 'codex' &&
     providerKey !== 'cx' &&
-    providerKey !== 'openai' &&
-    providerKey !== 'gccoa'
+    providerKey !== 'openai'
   ) {
     return false;
   }
 
-  return /(^|\/)(codex|cx|gccoa)\/gpt-5|gpt-5(\.[0-9]+)?-codex|^gpt-5(\.[0-9]+)?(?:$|[-_/])|^o[34](?:$|[-_/])/.test(
+  return /(^|\/)(codex|cx)\/gpt-5|gpt-5(\.[0-9]+)?-codex|^gpt-5(\.[0-9]+)?(?:$|[-_/])|^o[34](?:$|[-_/])/.test(
     id,
   );
 }
@@ -2065,8 +2068,8 @@ function normalizeChatPayload(payload: Record<string, unknown>, url: string): bo
 
   let changed = false;
   const model = typeof payload.model === 'string' ? payload.model : '';
-  const keepReasoning = isOpenAiCodexLikeModel(model);
-  const keepVerbosity = keepReasoning && !isGccoaModel(model);
+  const keepReasoning = isOpenAiReasoningModel(model);
+  const keepVerbosity = isOpenAiCodexLikeModel(model);
 
   if (payload.input !== undefined && payload.messages === undefined) {
     payload.messages = normalizeChatMessagesFromInput(payload.input);
@@ -2102,10 +2105,6 @@ function normalizeChatPayload(payload: Record<string, unknown>, url: string): bo
   }
 
   return changed;
-}
-
-function isGccoaModel(modelId: string): boolean {
-  return getProviderKey(modelId.toLowerCase()) === 'gccoa';
 }
 
 function normalizeChatMessagesFromInput(input: unknown): unknown[] {
