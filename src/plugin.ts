@@ -1340,7 +1340,7 @@ function createFetchInterceptor(
       debugLog('[OmniRoute] Processing /v1/models response');
     }
 
-    return sanitizeAnthropicMessagesResponse(url, response);
+    return sanitizeChatCompletionsResponse(url, sanitizeAnthropicMessagesResponse(url, response));
   };
 }
 
@@ -1375,6 +1375,23 @@ function sanitizeAnthropicMessagesResponse(url: string, response: Response): Res
   });
 }
 
+function sanitizeChatCompletionsResponse(url: string, response: Response): Response {
+  if (!url.includes('/chat/completions') || !response.body) {
+    return response;
+  }
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (!contentType.includes('text/event-stream')) {
+    return response;
+  }
+
+  return new Response(createChatCompletionsSseSanitizer(response.body), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 function createAnthropicSseSanitizer(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -1399,6 +1416,83 @@ function createAnthropicSseSanitizer(body: ReadableStream<Uint8Array>): Readable
             flushBufferedSseLines(controller, state, true, () => buffer, (next) => {
               buffer = next;
             }, encoder);
+            controller.close();
+            return;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+        }
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason): void {
+      void reader.cancel(reason);
+    },
+  });
+}
+
+interface ChatToolCallState {
+  id?: string;
+  name?: string;
+  type?: string;
+}
+
+interface ChatSseSanitizerState {
+  sse: SseEventChunk;
+  toolCalls: Map<number, ChatToolCallState>;
+  pendingContentEvents: string[];
+  sawToolCall: boolean;
+  emittedToolCall: boolean;
+}
+
+function createChatCompletionsSseSanitizer(
+  body: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const reader = body.getReader();
+  const state: ChatSseSanitizerState = {
+    sse: { event: undefined, data: [], lines: [] },
+    toolCalls: new Map(),
+    pendingContentEvents: [],
+    sawToolCall: false,
+    emittedToolCall: false,
+  };
+  let buffer = '';
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      try {
+        while (true) {
+          const emitted = flushBufferedChatCompletionSseLines(
+            controller,
+            state,
+            false,
+            () => buffer,
+            (next) => {
+              buffer = next;
+            },
+            encoder,
+          );
+          if (emitted) {
+            return;
+          }
+
+          const { value, done } = await reader.read();
+          if (done) {
+            buffer += decoder.decode();
+            flushBufferedChatCompletionSseLines(
+              controller,
+              state,
+              true,
+              () => buffer,
+              (next) => {
+                buffer = next;
+              },
+              encoder,
+            );
+            flushPendingChatContentEvents(controller, state, encoder);
             controller.close();
             return;
           }
@@ -1461,6 +1555,205 @@ function flushBufferedSseLines(
   }
 
   return emitted;
+}
+
+function flushBufferedChatCompletionSseLines(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  state: ChatSseSanitizerState,
+  isFinal: boolean,
+  getBuffer: () => string,
+  setBuffer: (value: string) => void,
+  encoder: TextEncoder,
+): boolean {
+  let emitted = false;
+  let buffer = getBuffer();
+  let line = consumeSseLine(buffer);
+
+  while (line) {
+    buffer = line.rest;
+    const eventText = ingestSseLine(state.sse, line.value);
+    if (eventText !== undefined) {
+      emitted = emitSanitizedChatCompletionSseEvent(controller, state, eventText, encoder) || emitted;
+    }
+    line = consumeSseLine(buffer);
+  }
+
+  setBuffer(buffer);
+
+  if (isFinal) {
+    if (buffer.length > 0) {
+      const eventText = ingestSseLine(state.sse, buffer);
+      setBuffer('');
+      if (eventText !== undefined) {
+        emitted =
+          emitSanitizedChatCompletionSseEvent(controller, state, eventText, encoder) || emitted;
+      }
+    }
+
+    const trailingEvent = flushSseEventChunk(state.sse);
+    if (trailingEvent !== undefined) {
+      emitted =
+        emitSanitizedChatCompletionSseEvent(controller, state, trailingEvent, encoder) || emitted;
+    }
+  }
+
+  return emitted;
+}
+
+function emitSanitizedChatCompletionSseEvent(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  state: ChatSseSanitizerState,
+  eventText: { event: string | undefined; data: string; raw: string },
+  encoder: TextEncoder,
+): boolean {
+  const trimmedData = eventText.data.trim();
+  if (trimmedData === '[DONE]') {
+    flushPendingChatContentEvents(controller, state, encoder);
+    controller.enqueue(encoder.encode(formatSseEvent(eventText.event, '[DONE]')));
+    return true;
+  }
+
+  const parsed = parseJsonObject(eventText.data);
+  if (!parsed) {
+    flushPendingChatContentEvents(controller, state, encoder);
+    controller.enqueue(encoder.encode(eventText.raw));
+    return true;
+  }
+
+  const choices = parsed.choices;
+  if (!Array.isArray(choices)) {
+    flushPendingChatContentEvents(controller, state, encoder);
+    controller.enqueue(encoder.encode(eventText.raw));
+    return true;
+  }
+
+  if (choices.length === 0) {
+    debugLog('[OmniRoute] Dropped empty chat completions SSE choices chunk');
+    return false;
+  }
+
+  const hasToolCall = normalizeChatCompletionToolCallDeltas(choices, state);
+  const finishesWithToolCalls = choices.some((choice) =>
+    isRecord(choice) && choice.finish_reason === 'tool_calls',
+  );
+
+  if (hasToolCall || finishesWithToolCalls) {
+    state.sawToolCall = true;
+    state.pendingContentEvents = [];
+    const raw = formatSseEvent(eventText.event, JSON.stringify(parsed));
+    controller.enqueue(encoder.encode(raw));
+    return true;
+  }
+
+  if (state.sawToolCall) {
+    debugLog('[OmniRoute] Dropped chat completions content chunk after tool call started');
+    return false;
+  }
+
+  if (hasChatCompletionContentDelta(choices)) {
+    state.pendingContentEvents.push(formatSseEvent(eventText.event, JSON.stringify(parsed)));
+    return false;
+  }
+
+  flushPendingChatContentEvents(controller, state, encoder);
+  controller.enqueue(encoder.encode(formatSseEvent(eventText.event, JSON.stringify(parsed))));
+  return true;
+}
+
+function normalizeChatCompletionToolCallDeltas(
+  choices: unknown[],
+  state: ChatSseSanitizerState,
+): boolean {
+  let hasToolCall = false;
+
+  for (const choice of choices) {
+    if (!isRecord(choice) || !isRecord(choice.delta)) {
+      continue;
+    }
+
+    const toolCalls = choice.delta.tool_calls;
+    if (!Array.isArray(toolCalls)) {
+      continue;
+    }
+
+    hasToolCall = true;
+    if (!state.emittedToolCall && typeof choice.delta.role !== 'string') {
+      choice.delta.role = 'assistant';
+    }
+
+    for (let fallbackIndex = 0; fallbackIndex < toolCalls.length; fallbackIndex += 1) {
+      const toolCall = toolCalls[fallbackIndex];
+      if (!isRecord(toolCall)) {
+        continue;
+      }
+
+      const index = typeof toolCall.index === 'number' ? toolCall.index : fallbackIndex;
+      const cached = state.toolCalls.get(index) ?? {};
+      state.toolCalls.set(index, cached);
+
+      if (typeof toolCall.id === 'string' && toolCall.id.length > 0) {
+        cached.id = toolCall.id;
+      } else if (cached.id) {
+        toolCall.id = cached.id;
+      } else if (toolCall.id === null) {
+        delete toolCall.id;
+      }
+
+      if (typeof toolCall.type === 'string' && toolCall.type.length > 0) {
+        cached.type = toolCall.type;
+      } else if (cached.type) {
+        toolCall.type = cached.type;
+      } else if (toolCall.type === null) {
+        delete toolCall.type;
+      }
+
+      if (isRecord(toolCall.function)) {
+        if (typeof toolCall.function.name === 'string' && toolCall.function.name.length > 0) {
+          cached.name = toolCall.function.name;
+        } else if (cached.name) {
+          toolCall.function.name = cached.name;
+        } else if (toolCall.function.name === null) {
+          delete toolCall.function.name;
+        }
+      }
+    }
+
+    state.emittedToolCall = true;
+  }
+
+  return hasToolCall;
+}
+
+function hasChatCompletionContentDelta(choices: unknown[]): boolean {
+  return choices.some((choice) => {
+    if (!isRecord(choice) || !isRecord(choice.delta)) {
+      return false;
+    }
+
+    return typeof choice.delta.content === 'string' && choice.delta.content.length > 0;
+  });
+}
+
+function flushPendingChatContentEvents(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  state: ChatSseSanitizerState,
+  encoder: TextEncoder,
+): boolean {
+  if (state.sawToolCall || state.pendingContentEvents.length === 0) {
+    state.pendingContentEvents = [];
+    return false;
+  }
+
+  for (const raw of state.pendingContentEvents) {
+    controller.enqueue(encoder.encode(raw));
+  }
+  state.pendingContentEvents = [];
+  return true;
+}
+
+function formatSseEvent(eventName: string | undefined, data: string): string {
+  const eventLine = eventName ? `event: ${eventName}\n` : '';
+  return `${eventLine}data: ${data}\n\n`;
 }
 
 function consumeSseLine(text: string): { value: string; rest: string } | undefined {

@@ -2020,7 +2020,129 @@ test('loader drops invalid empty Anthropic SSE events from messages stream', asy
   assert.doesNotMatch(text, /data: \{\}/);
 });
 
-test('loader does not sanitize non-messages event streams', async () => {
+test('loader normalizes chat completions tool call streams', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const sse = [
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Saya akan membuat dummy todo."},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_test","type":"function","function":{"name":"todowrite","arguments":""}}]},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":null,"type":null,"function":{"name":null,"arguments":"{\\"todos\\":[{\\"content\\":\\"dummy\\",\\"status\\":\\"pending\\"}]"}}]},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":null,"type":null,"function":{"name":null,"arguments":"}"}}]},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":null,"role":null,"tool_calls":null},"finish_reason":"tool_calls"}]}',
+    '',
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n');
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(sse, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  const response = await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'mimo/mimo-v2.5', messages: [], stream: true }),
+  });
+  const text = await response.text();
+
+  assert.equal(response.headers.get('Content-Type'), 'text/event-stream');
+  assert.doesNotMatch(text, /Saya akan membuat dummy todo/);
+  assert.doesNotMatch(text, /"choices":\[\]/);
+  assert.match(text, /"finish_reason":"tool_calls"/);
+
+  const chunks = text
+    .split('\n\n')
+    .filter((chunk) => chunk.startsWith('data: {'))
+    .map((chunk) => JSON.parse(chunk.slice('data: '.length)));
+  const toolChunks = chunks.flatMap((chunk) =>
+    chunk.choices.flatMap((choice) => choice.delta.tool_calls ?? []),
+  );
+
+  assert.equal(toolChunks.length, 3);
+  for (const toolCall of toolChunks) {
+    assert.equal(toolCall.id, 'call_test');
+    assert.equal(toolCall.type, 'function');
+    assert.equal(toolCall.function.name, 'todowrite');
+  }
+});
+
+test('loader preserves chat completions text streams without tool calls', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const sse = [
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"halo"},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" dunia"},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n');
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(sse, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  const response = await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'mimo/mimo-v2.5', messages: [], stream: true }),
+  });
+  const text = await response.text();
+
+  assert.match(text, /"content":"halo"/);
+  assert.match(text, /"content":" dunia"/);
+  assert.match(text, /"finish_reason":"stop"/);
+});
+
+test('loader preserves unknown chat completions event streams', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 
   global.fetch = async (input) => {
