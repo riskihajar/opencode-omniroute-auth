@@ -1351,7 +1351,10 @@ test('responses mode falls back antigravity gemini models to chat provider runti
 
   await plugin.config(config);
 
-  assert.equal(config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm, '@ai-sdk/openai');
+  assert.equal(
+    config.provider.omniroute.models['antigravity/gemini-3.1-pro-high'].api.npm,
+    '@ai-sdk/openai-compatible',
+  );
 });
 
 test('responses mode falls back mlx qwen models to chat provider runtime', async () => {
@@ -1385,8 +1388,46 @@ test('responses mode falls back mlx qwen models to chat provider runtime', async
 
   assert.equal(
     config.provider.omniroute.models['mlx/mlx-community/Qwen3.5-4B-MLX-8bit'].api.npm,
-    '@ai-sdk/openai',
+    '@ai-sdk/openai-compatible',
   );
+});
+
+test('responses mode falls back unknown non-OpenAI models to chat provider runtime', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'responses',
+        },
+        models: {
+          'mimo/mimo-v2.5': {
+            name: 'mimo-v2.5',
+            root: 'mimo-v2.5',
+            capabilities: {
+              reasoning: true,
+              toolcall: true,
+              attachment: false,
+            },
+            limit: {
+              context: 262144,
+              output: 65536,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.models['mimo/mimo-v2.5'].api.npm, '@ai-sdk/openai-compatible');
+  assert.equal(
+    config.provider.omniroute.models['mimo/mimo-v2.5'].provider.npm,
+    '@ai-sdk/openai-compatible',
+  );
+  assert.equal(config.provider.omniroute.models['mimo/mimo-v2.5'].api.url, 'http://localhost:20128/v1');
 });
 
 test('per-model apiMode override forces chat runtime even when global mode is responses', async () => {
@@ -1425,7 +1466,7 @@ test('per-model apiMode override forces chat runtime even when global mode is re
   await plugin.config(config);
 
   assert.equal(config.provider.omniroute.options.modelMetadata['minimax/minimax-m1'].apiMode, 'chat');
-  assert.equal(config.provider.omniroute.models['minimax/minimax-m1'].api.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['minimax/minimax-m1'].api.npm, '@ai-sdk/openai-compatible');
 });
 
 test('per-model apiMode override can keep anthropic-family model on responses runtime', async () => {
@@ -3026,6 +3067,157 @@ test('chat payload keeps reasoning for OpenAI models behind dynamic provider pre
   assert.equal(forwardedBody.reasoningEffort, undefined);
   assert.deepEqual(forwardedBody.reasoning, { effort: 'high' });
   assert.equal(forwardedBody.verbosity, undefined);
+});
+
+test('chat payload slims tool definitions for non-OpenAI compatible models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+  const longDescription = 'x'.repeat(320);
+  const longSchemaDescription = 'y'.repeat(220);
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'mimo/mimo-v2.5',
+      messages: [{ role: 'user', content: 'test' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'todowrite',
+            description: longDescription,
+            parameters: {
+              type: 'object',
+              $schema: 'https://json-schema.org/draft/2020-12/schema',
+              additionalProperties: false,
+              properties: {
+                todos: {
+                  type: 'array',
+                  description: longSchemaDescription,
+                  items: {
+                    type: 'object',
+                    description: longSchemaDescription,
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  const tool = forwardedBody.tools[0].function;
+  assert.equal(tool.description.length, 240);
+  assert.equal(tool.parameters.$schema, undefined);
+  assert.equal(tool.parameters.additionalProperties, undefined);
+  assert.equal(tool.parameters.properties.todos.description.length, 160);
+  assert.equal(tool.parameters.properties.todos.items.description.length, 160);
+});
+
+test('chat payload does not apply generic non-OpenAI slimming to dynamic GPT models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith('/api/combos')) {
+      return new Response(JSON.stringify({ combos: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const raw = typeof init?.body === 'string' ? init.body : await input.clone().text();
+    forwardedBody = JSON.parse(raw);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+  const longDescription = 'x'.repeat(320);
+  const longSchemaDescription = 'y'.repeat(220);
+
+  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'sa/slashai/gpt-5.5',
+      messages: [{ role: 'user', content: 'test' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'todowrite',
+            description: longDescription,
+            parameters: {
+              type: 'object',
+              $schema: 'https://json-schema.org/draft/2020-12/schema',
+              properties: {
+                todos: {
+                  type: 'array',
+                  description: longSchemaDescription,
+                },
+              },
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  const tool = forwardedBody.tools[0].function;
+  assert.equal(tool.description, longDescription);
+  assert.equal(tool.parameters.$schema, 'https://json-schema.org/draft/2020-12/schema');
+  assert.equal(tool.parameters.properties.todos.description, longSchemaDescription);
 });
 
 test('chat payload converts input-shaped bodies into messages', async () => {

@@ -502,13 +502,25 @@ function getProviderNpm(apiMode: OmniRouteApiMode, model?: OmniRouteModel): stri
     return OMNIROUTE_ANTHROPIC_PROVIDER_NPM;
   }
 
-  if (apiMode === 'chat' && usesOpenAiCompatibleChatRuntime(model?.owned_by)) {
-    return OMNIROUTE_OPENAI_COMPATIBLE_CHAT_PROVIDER_NPM;
+  if (apiMode === 'chat') {
+    return shouldUseOpenAiCompatibleChatProvider(model)
+      ? OMNIROUTE_OPENAI_COMPATIBLE_CHAT_PROVIDER_NPM
+      : OMNIROUTE_CHAT_PROVIDER_NPM;
   }
 
-  return apiMode === 'responses'
-    ? OMNIROUTE_RESPONSES_PROVIDER_NPM
-    : OMNIROUTE_CHAT_PROVIDER_NPM;
+  return OMNIROUTE_RESPONSES_PROVIDER_NPM;
+}
+
+function shouldUseOpenAiCompatibleChatProvider(model?: OmniRouteModel): boolean {
+  if (!model) {
+    return false;
+  }
+
+  if (usesOpenAiCompatibleChatRuntime(model.owned_by)) {
+    return true;
+  }
+
+  return !supportsResponsesApiStreaming(model.id, model.root, model.owned_by);
 }
 
 function getEffectiveApiModeForModel(
@@ -531,7 +543,7 @@ function getEffectiveApiModeForModel(
     return requestedApiMode;
   }
 
-  return supportsResponsesApiStreaming(model.id) ? 'responses' : 'chat';
+  return supportsResponsesApiStreaming(model.id, model.root, model.owned_by) ? 'responses' : 'chat';
 }
 
 function isAnthropicFamilyModel(modelId: string, root?: string, ownedBy?: string): boolean {
@@ -570,31 +582,45 @@ function isCursorComposerModel(modelId: string, root?: string): boolean {
   );
 }
 
-function supportsResponsesApiStreaming(modelId: string): boolean {
-  const id = modelId.toLowerCase();
-  const baseModelId = stripModelRuntimeSuffixes(id);
+function supportsResponsesApiStreaming(modelId: string, root?: string, ownedBy?: string): boolean {
+  const candidates = [modelId, root, ownedBy]
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => stripModelRuntimeSuffixes(value.toLowerCase()));
 
-  if (baseModelId === 'cu/default' || baseModelId === 'cursor/default') {
+  if (candidates.some((value) => value === 'cu/default' || value === 'cursor/default')) {
     return false;
   }
 
-  if (
-    baseModelId.includes('mlx/') ||
-    baseModelId.includes('/mlx-') ||
-    baseModelId.includes('mlx-community/') ||
-    baseModelId.includes('qwen') ||
-    baseModelId.includes('claude') ||
-    baseModelId.includes('anthropic') ||
-    baseModelId.includes('opus') ||
-    baseModelId.includes('sonnet') ||
-    baseModelId.includes('haiku') ||
-    baseModelId.includes('gemini') ||
-    isCursorComposerModel(baseModelId)
-  ) {
+  if (candidates.some((value) => isKnownNonOpenAiResponsesModel(value))) {
     return false;
   }
 
-  return true;
+  return candidates.some((value) => isOpenAiResponsesModelId(value));
+}
+
+function isKnownNonOpenAiResponsesModel(modelId: string): boolean {
+  return (
+    modelId.includes('mlx/') ||
+    modelId.includes('/mlx-') ||
+    modelId.includes('mlx-community/') ||
+    modelId.includes('qwen') ||
+    modelId.includes('claude') ||
+    modelId.includes('anthropic') ||
+    modelId.includes('opus') ||
+    modelId.includes('sonnet') ||
+    modelId.includes('haiku') ||
+    modelId.includes('gemini') ||
+    isCursorComposerModel(modelId)
+  );
+}
+
+function isOpenAiResponsesModelId(modelId: string): boolean {
+  const leaf = modelId.split('/').at(-1) ?? modelId;
+  return (
+    /^(gpt|o[134])(?:[-_.]|$)/.test(leaf) ||
+    leaf.includes('codex') ||
+    modelId.includes('openai/')
+  );
 }
 
 function stripModelRuntimeSuffixes(modelId: string): string {
@@ -1931,6 +1957,7 @@ async function transformRequestBody(
     changed = normalizeReasoningPayload(payload) || changed;
     changed = normalizeChatPayload(payload, url) || changed;
     changed = normalizeResponsesPayload(payload, url) || changed;
+    changed = slimNonOpenAiChatPayload(payload, url) || changed;
     changed = slimCodexPayload(payload) || changed;
     changed = sanitizeGeminiToolSchemas(payload) || changed;
   }
@@ -2737,6 +2764,27 @@ function normalizeReasoningPayload(payload: Record<string, unknown>): boolean {
     changed = true;
   }
 
+  return changed;
+}
+
+function slimNonOpenAiChatPayload(payload: Record<string, unknown>, url: string): boolean {
+  if (!url.includes('/chat/completions')) {
+    return false;
+  }
+
+  const model = typeof payload.model === 'string' ? payload.model : '';
+  if (model === '' || isOpenAiResponsesModelId(stripModelRuntimeSuffixes(model.toLowerCase()))) {
+    return false;
+  }
+
+  if (!Array.isArray(payload.tools) || payload.tools.length === 0) {
+    return false;
+  }
+
+  const changed = slimToolDefinitions(payload.tools);
+  if (changed) {
+    debugLog('[OmniRoute] Slimmed non-OpenAI chat tool definitions');
+  }
   return changed;
 }
 
