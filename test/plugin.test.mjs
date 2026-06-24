@@ -1006,6 +1006,121 @@ test('responses mode detects OpenAI reasoning models behind dynamic provider pre
   });
 });
 
+test('loader enables tool calling by default even when upstream model metadata is conservative', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'mimo/mimo-v2.5',
+            name: 'mimo-v2.5',
+            owned_by: 'mimo',
+            root: 'mimo-v2.5',
+            capabilities: {
+              vision: false,
+              tool_calling: false,
+              reasoning: false,
+            },
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+            context_length: 128000,
+            max_output_tokens: 8192,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://models.dev/api.json') {
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+    },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.equal(provider.models['mimo/mimo-v2.5'].capabilities.toolcall, true);
+});
+
+test('loader respects explicit modelMetadata supportsTools false override', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: 'mimo/mimo-v2.5',
+            name: 'mimo-v2.5',
+            owned_by: 'mimo',
+            root: 'mimo-v2.5',
+            capabilities: {
+              vision: false,
+              tool_calling: true,
+              reasoning: false,
+            },
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+            context_length: 128000,
+            max_output_tokens: 8192,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://models.dev/api.json') {
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const provider = {
+    options: {
+      baseURL: 'http://localhost:20128/v1',
+      apiMode: 'chat',
+      modelMetadata: {
+        'mimo/mimo-v2.5': {
+          supportsTools: false,
+        },
+      },
+    },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.equal(provider.models['mimo/mimo-v2.5'].capabilities.toolcall, false);
+});
+
 test('resetEmbeddedReasoningVariant restores generated variants for embedded high suffix models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   global.fetch = createEmptyOmniRouteFetch();

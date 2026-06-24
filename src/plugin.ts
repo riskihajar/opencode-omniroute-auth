@@ -940,7 +940,7 @@ function toProviderModel(
   const supportsToolsOverride = getCapabilityOverride(model.id, configured, 'supportsTools');
   const supportsTools = typeof supportsToolsOverride === 'boolean'
     ? supportsToolsOverride
-    : model.supportsTools !== false;
+    : true;
   const reasoning = getProviderModelReasoningSupport(
     effectiveModel,
     apiMode,
